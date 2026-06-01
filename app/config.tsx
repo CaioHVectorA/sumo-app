@@ -47,11 +47,11 @@ export default function ConfigScreen() {
   };
 
   return (
-    <View className="flex-1 bg-white">
-      <Stack.Screen options={{ title: 'Configuracao' }} />
+    <View className="flex-1 bg-sky-50">
+      <Stack.Screen options={{ headerShown: false }} />
       <Container>
         <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 24, paddingHorizontal: 16 }}>
-          <View className="gap-2 pt-4">
+          <View className="gap-2 pt-2">
             <Text className="text-2xl font-bold">Configuracao do robo</Text>
             <Text className="text-sm text-gray-600">
               Envie parametros para o firmware AVR e solicite STATUS.

@@ -39,10 +39,10 @@ export default function ManualScreen() {
   };
 
   return (
-    <View className="flex-1 bg-white">
-      <Stack.Screen options={{ title: 'Controle manual' }} />
+    <View className="flex-1 bg-sky-50">
+      <Stack.Screen options={{ headerShown: false }} />
       <Container>
-        <View className="flex-1 gap-6 px-4 pb-8 pt-4">
+        <View className="flex-1 gap-6 px-4 pb-8 pt-2">
           <View className="gap-2">
             <Text className="text-2xl font-bold">Controle manual</Text>
             <Text className="text-sm text-gray-600">

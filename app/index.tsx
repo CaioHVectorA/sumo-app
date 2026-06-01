@@ -7,10 +7,10 @@ import { Container } from '@/components/Container';
 
 export default function Home() {
   return (
-    <View className="flex flex-1 bg-white">
-      <Stack.Screen options={{ title: 'Robo Sumo' }} />
+    <View className="flex flex-1 bg-sky-50">
+      <Stack.Screen options={{ headerShown: false }} />
       <Container>
-        <View className="flex-1 gap-8 px-4 pb-8 pt-6">
+        <View className="flex-1 gap-6 px-4 pb-8 pt-3">
           <View className="gap-2">
             <Text className="text-3xl font-bold">Robo Sumo</Text>
             <Text className="text-base text-gray-600">

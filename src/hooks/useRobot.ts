@@ -8,7 +8,6 @@ type Telemetry = {
   pwm: number;
   delta: number;
 };
-
 export function useRobot() {
   const [status, setStatus] = useState<RobotStatus | null>(null);
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
@@ -16,7 +15,8 @@ export function useRobot() {
   useEffect(() => {
     const unsubscribe = onData((line) => {
       if (line.startsWith('STATUS')) {
-        setStatus(parseStatus(line));
+        const textoTraduzidoDoBluetooth = parseStatus(line);
+        setStatus(textoTraduzidoDoBluetooth);
         return;
       }
 
@@ -39,7 +39,6 @@ export function useRobot() {
 function parseStatus(line: string) {
   const data: RobotStatus = {};
   const parts = line.split(';');
-
   parts.forEach((part) => {
     if (!part || part === 'STATUS') return;
 

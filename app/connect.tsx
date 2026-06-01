@@ -73,10 +73,10 @@ export default function ConnectScreen() {
   };
 
   return (
-    <View className="flex-1 bg-white">
-      <Stack.Screen options={{ title: 'Conexao Bluetooth' }} />
+    <View className="flex-1 bg-sky-50">
+      <Stack.Screen options={{ headerShown: false }} />
       <Container>
-        <View className="flex-1 gap-5 px-4 pb-6 pt-4">
+        <View className="flex-1 gap-5 px-4 pb-6 pt-2">
           <View className="gap-1">
             <Text className="text-2xl font-bold">Dispositivos emparelhados</Text>
             <Text className="text-sm text-gray-600">
