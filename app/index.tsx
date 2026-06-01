@@ -1,25 +1,43 @@
-import { Stack, Link } from 'expo-router';
+import { Link, Stack } from 'expo-router';
 
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { Button } from '@/components/Button';
 import { Container } from '@/components/Container';
-import { ScreenContent } from '@/components/ScreenContent';
 
 export default function Home() {
   return (
-    <View className={styles.container}>
-      <Stack.Screen options={{ title: 'Home' }} />
+    <View className="flex flex-1 bg-white">
+      <Stack.Screen options={{ title: 'Robo Sumo' }} />
       <Container>
-        <ScreenContent path="app/index.tsx" title="Home"></ScreenContent>
-        <Link href={{ pathname: '/details', params: { name: 'Dan' } }} asChild>
-          <Button title="Show Details" />
-        </Link>
+        <View className="flex-1 gap-8 px-4 pb-8 pt-6">
+          <View className="gap-2">
+            <Text className="text-3xl font-bold">Robo Sumo</Text>
+            <Text className="text-base text-gray-600">
+              Controle Bluetooth, configuracao e telemetria do robo.
+            </Text>
+          </View>
+
+          <View className="gap-3">
+            <Link href="/connect" asChild>
+              <Button title="Conectar" />
+            </Link>
+            <Link href="/config" asChild>
+              <Button title="Configuracao" />
+            </Link>
+            <Link href="/manual" asChild>
+              <Button title="Controle manual" />
+            </Link>
+          </View>
+
+          <View className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <Text className="text-sm font-semibold text-gray-700">Dica rapida</Text>
+            <Text className="mt-2 text-sm text-gray-600">
+              Emparelhe o HC-05 no Android e depois toque em Conectar.
+            </Text>
+          </View>
+        </View>
       </Container>
     </View>
   );
 }
-
-const styles = {
-  container: 'flex flex-1 bg-white',
-};
