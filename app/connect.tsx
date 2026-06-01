@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
-import { Stack } from 'expo-router';
 import RNBluetoothClassic from 'react-native-bluetooth-classic';
 
 import { Button } from '@/components/Button';
@@ -73,17 +72,9 @@ export default function ConnectScreen() {
   };
 
   return (
-    <View className="flex-1 bg-sky-50">
-      <Stack.Screen options={{ headerShown: false }} />
+    <View className="flex-1 bg-white">
       <Container>
-        <View className="flex-1 gap-5 px-4 pb-6 pt-2">
-          <View className="gap-1">
-            <Text className="text-2xl font-bold">Dispositivos emparelhados</Text>
-            <Text className="text-sm text-gray-600">
-              Selecione um dispositivo (HC-05, SUMO, ROBO_01).
-            </Text>
-          </View>
-
+        <View className="flex-1 gap-5 px-4 pb-6 pt-0">
           <View className="flex-row items-center justify-between">
             <Button title="Atualizar lista" onPress={loadDevices} />
             {loading ? <ActivityIndicator /> : null}
@@ -100,7 +91,7 @@ export default function ConnectScreen() {
             contentContainerStyle={{ gap: 12, paddingBottom: 12 }}
             renderItem={({ item }) => (
               <TouchableOpacity
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                className="rounded-lg border border-sky-300 bg-sky-100 p-4"
                 onPress={() => handleConnect(item)}
                 disabled={connecting === item.address}>
                 <Text className="text-lg font-semibold">{item.name}</Text>
@@ -112,7 +103,7 @@ export default function ConnectScreen() {
             )}
             ListEmptyComponent={
               loading ? null : (
-                <View className="rounded-2xl border border-dashed border-gray-300 bg-white p-6">
+                <View className="rounded-lg border border-dashed border-sky-300 bg-sky-50 p-6">
                   <Text className="text-center text-sm text-gray-500">
                     Nenhum dispositivo emparelhado encontrado.
                   </Text>
