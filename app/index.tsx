@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, PermissionsAndroid, Platform } from 'react-native';
+import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, PermissionsAndroid, Platform, ScrollView, Alert } from 'react-native';
 import RNBluetoothClassic from 'react-native-bluetooth-classic';
 
 import { Button } from '@/components/Button';
 import { Container } from '@/components/Container';
-import { connect } from '@/src/services/bluetooth';
+import { connect, disconnect, getConnectedDevice } from '@/src/services/bluetooth';
+import { useRobot } from '@/src/hooks/useRobot';
 
 type BondedDevice = {
   name?: string;
@@ -23,6 +24,7 @@ export default function ConnectScreen() {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [connectedName, setConnectedName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { logs } = useRobot();
 
   const requestPermissions = async () => {
     if (Platform.OS === 'android') {
@@ -106,6 +108,17 @@ export default function ConnectScreen() {
     }
   };
 
+  const handleDisconnect = async () => {
+    try {
+      await disconnect();
+      setConnectedName(null);
+      Alert.alert('Desconectado', 'Conexão Bluetooth encerrada.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to disconnect.';
+      setError(message);
+    }
+  };
+
   return (
     <View className="flex-1 bg-white">
       <Container>
@@ -113,6 +126,13 @@ export default function ConnectScreen() {
           <View className="flex-row items-center justify-between">
             <Button title="Atualizar lista" onPress={loadDevices} />
             {loading ? <ActivityIndicator /> : null}
+            {connectedName && (
+              <TouchableOpacity
+                onPress={handleDisconnect}
+                className="rounded-md bg-red-100 px-4 py-2 border border-red-200">
+                <Text className="text-sm font-semibold text-red-600">Desconectar</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {error ? <Text className="text-sm text-red-600">{error}</Text> : null}
@@ -146,6 +166,21 @@ export default function ConnectScreen() {
               )
             }
           />
+
+          <View className="mt-2 flex-1 rounded-lg border border-slate-300 bg-slate-900 p-2">
+            <Text className="mb-1 text-xs font-bold text-slate-400">CONSOLE LOGS (BLUETOOTH)</Text>
+            <ScrollView className="flex-1">
+              {logs.length === 0 ? (
+                <Text className="text-xs italic text-slate-600">Aguardando dados...</Text>
+              ) : (
+                logs.map((log, index) => (
+                  <Text key={index} className="font-mono text-[10px] text-emerald-400">
+                    {`> ${log}`}
+                  </Text>
+                ))
+              )}
+            </ScrollView>
+          </View>
         </View>
       </Container>
     </View>

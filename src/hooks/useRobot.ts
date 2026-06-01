@@ -11,9 +11,12 @@ type Telemetry = {
 export function useRobot() {
   const [status, setStatus] = useState<RobotStatus | null>(null);
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
 
   useEffect(() => {
     const unsubscribe = onData((line) => {
+      setLogs((prev) => [line, ...prev].slice(0, 50));
+
       if (line.startsWith('STATUS')) {
         const textoTraduzidoDoBluetooth = parseStatus(line);
         setStatus(textoTraduzidoDoBluetooth);
@@ -33,6 +36,7 @@ export function useRobot() {
   return {
     status,
     telemetry,
+    logs,
   };
 }
 

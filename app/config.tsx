@@ -49,25 +49,41 @@ export default function ConfigScreen() {
     <View className="flex-1 bg-white">
       <Container>
         <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 24, paddingHorizontal: 16, paddingTop: 0 }}>
-          <View className="flex-row flex-wrap gap-3">
-            <Button title="Enviar STATUS" onPress={() => send('STATUS')} />
-            <Button title="Enviar tudo" onPress={sendAll} />
-            <Button title="Estrategia A" onPress={() => send('ESTRATEGIA_A')} />
+          <View className="items-center justify-center p-4 bg-sky-50 rounded-lg border border-sky-100 mb-2">
+            <View className="flex-row flex-wrap justify-center gap-3">
+              <TouchableOpacity 
+                onPress={() => send('STATUS')}
+                className="bg-slate-900 px-6 py-3 rounded-md shadow-sm active:opacity-70">
+                <Text className="text-white font-bold text-center">Enviar STATUS</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                onPress={sendAll}
+                className="bg-slate-900 px-6 py-3 rounded-md shadow-sm active:opacity-70">
+                <Text className="text-white font-bold text-center">Enviar tudo</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                onPress={() => send('ESTRATEGIA_A')}
+                className="bg-slate-900 px-6 py-3 rounded-md shadow-sm active:opacity-70">
+                <Text className="text-white font-bold text-center">Estratégia A</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View className="gap-3">
             {fields.map((field) => (
-              <View key={field.key} className="rounded-lg border border-sky-300 bg-sky-100 p-4">
-                <Text className="text-sm font-semibold text-gray-700">{field.label}</Text>
+              <View key={field.key} className="rounded-lg border border-slate-100 bg-white p-4 shadow-sm">
+                <Text className="text-sm font-semibold text-gray-500 uppercase tracking-wider">{field.label}</Text>
                 <View className="mt-3 flex-row items-center gap-3">
                   <TextInput
                     value={field.value}
                     onChangeText={field.setValue}
                     keyboardType="numeric"
-                    className="flex-1 rounded-md border border-gray-200 px-3 py-2 text-base"
+                    className="flex-1 rounded-md border border-gray-200 px-3 py-2 text-base bg-slate-50"
                   />
                   <TouchableOpacity
-                    className="rounded-md bg-sky-400 px-4 py-2"
+                    className="rounded-md bg-slate-900 px-4 py-2"
                     onPress={() => sendParam(field.key, field.value)}>
                     <Text className="text-sm font-semibold text-white">Enviar</Text>
                   </TouchableOpacity>
@@ -77,13 +93,13 @@ export default function ConfigScreen() {
           </View>
 
           {status ? (
-            <View className="rounded-lg border border-sky-300 bg-sky-100 p-4">
+            <View className="rounded-lg border border-slate-100 bg-white p-4 shadow-sm">
               <Text className="text-sm font-semibold text-gray-700">Status atual</Text>
               <View className="mt-3 gap-2">
                 {Object.entries(status).map(([key, value]) => (
-                  <View key={key} className="flex-row items-center justify-between">
-                    <Text className="text-xs text-gray-500">{key}</Text>
-                    <Text className="text-xs font-semibold text-gray-800">{value}</Text>
+                  <View key={key} className="flex-row items-center justify-between py-1 border-b border-slate-50">
+                    <Text className="text-xs text-gray-400 font-medium uppercase">{key}</Text>
+                    <Text className="text-xs font-bold text-slate-800">{value}</Text>
                   </View>
                 ))}
               </View>
