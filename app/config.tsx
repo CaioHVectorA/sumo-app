@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { Button } from '@/components/Button';
 import { Container } from '@/components/Container';
-import { send } from '@/src/services/bluetooth';
+import { onData, send } from '@/src/services/bluetooth';
 import { useRobot } from '@/src/hooks/useRobot';
 
 type FieldConfig = {
@@ -20,8 +20,30 @@ export default function ConfigScreen() {
   const [breakTime3, setBreakTime3] = useState('250');
   const [timeBeforeMoving, setTimeBeforeMoving] = useState('1500');
   const [variancia, setVariancia] = useState('2');
+  const [sensors, setSensors] = useState(0);
 
   const { status } = useRobot();
+
+  useEffect(() => {
+    const unsubscribe = onData((line) => {
+      if (line.startsWith('TEL;')) {
+        const value = Number(line.split(';')[1]);
+        setSensors(Number.isNaN(value) ? 0 : value);
+      }
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
+  const sensorBits = [
+    Boolean(sensors & (1 << 4)),
+    Boolean(sensors & (1 << 3)),
+    Boolean(sensors & (1 << 2)),
+    Boolean(sensors & (1 << 1)),
+    Boolean(sensors & (1 << 0)),
+  ];
 
   const fields = useMemo<FieldConfig[]>(
     () => [
@@ -68,6 +90,20 @@ export default function ConfigScreen() {
                 className="bg-slate-900 px-6 py-3 rounded-md shadow-sm active:opacity-70">
                 <Text className="text-white font-bold text-center">Estratégia A</Text>
               </TouchableOpacity>
+            </View>
+          </View>
+
+          <View className="rounded-lg border border-slate-100 bg-white p-4 shadow-sm">
+            <Text className="text-sm font-semibold text-gray-700">Sensores em tempo real</Text>
+            <View className="mt-4 flex-row justify-center gap-2">
+              {sensorBits.map((active, index) => (
+                <View
+                  key={index}
+                  className={`h-12 w-12 rounded-md border ${
+                    active ? 'border-green-600 bg-green-500' : 'border-zinc-700 bg-zinc-800'
+                  }`}
+                />
+              ))}
             </View>
           </View>
 

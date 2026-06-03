@@ -1,5 +1,5 @@
+import { onData, send } from '@/src/services/bluetooth';
 import { useEffect, useState } from 'react';
-import { onData } from '@/src/services/bluetooth';
 
 type RobotStatus = Record<string, string>;
 
@@ -12,9 +12,16 @@ export function useRobot() {
   const [status, setStatus] = useState<RobotStatus | null>(null);
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      send('SENSORES');
+    }, 1000);
 
+    return () => clearInterval(interval);
+  }, []);
   useEffect(() => {
     const unsubscribe = onData((line) => {
+      console.log('Received line:', line);
       setLogs((prev) => [line, ...prev].slice(0, 50));
 
       if (line.startsWith('STATUS')) {

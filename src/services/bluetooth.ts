@@ -38,7 +38,7 @@ export async function connect(address: string) {
   if (!RNBluetoothClassic || typeof RNBluetoothClassic.connectToDevice !== 'function') {
     throw new Error('Bluetooth indisponivel. Rode no Android com o modulo nativo.');
   }
-
+  //@ts-ignore
   const connected = (await RNBluetoothClassic.connectToDevice(address)) as BluetoothDevice;
   device = connected;
   buffer = '';
@@ -59,8 +59,8 @@ export async function disconnect() {
 
 export async function send(command: string) {
   if (!device) return;
-
-  await device.write(`${command}\n`);
+  //console.log('Enviando comando:', command);
+  await device.write(command.endsWith('\n') ? command : `${command}\n`);
 }
 
 export function onData(callback: DataListener) {
