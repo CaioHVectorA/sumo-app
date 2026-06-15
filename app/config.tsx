@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, TextInput, TouchableOpacity, View, Switch } from 'react-native';
 
 import { Button } from '@/components/Button';
 import { Container } from '@/components/Container';
@@ -20,22 +20,9 @@ export default function ConfigScreen() {
   const [breakTime3, setBreakTime3] = useState('250');
   const [timeBeforeMoving, setTimeBeforeMoving] = useState('1500');
   const [variancia, setVariancia] = useState('2');
-  const [sensors, setSensors] = useState(0);
+  const { status, telemetry, isRealTime, setIsRealTime, getSensors } = useRobot();
 
-  const { status } = useRobot();
-
-  useEffect(() => {
-    const unsubscribe = onData((line) => {
-      if (line.startsWith('TEL;')) {
-        const value = Number(line.split(';')[1]);
-        setSensors(Number.isNaN(value) ? 0 : value);
-      }
-    });
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, []);
+  const sensors = telemetry?.sensores ?? 0;
 
   const sensorBits = [
     Boolean(sensors & (1 << 4)),
@@ -74,12 +61,6 @@ export default function ConfigScreen() {
           <View className="items-center justify-center p-4 bg-sky-50 rounded-lg border border-sky-100 mb-2">
             <View className="flex-row flex-wrap justify-center gap-3">
               <TouchableOpacity 
-                onPress={() => send('STATUS')}
-                className="bg-slate-900 px-6 py-3 rounded-md shadow-sm active:opacity-70">
-                <Text className="text-white font-bold text-center">Enviar STATUS</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
                 onPress={sendAll}
                 className="bg-slate-900 px-6 py-3 rounded-md shadow-sm active:opacity-70">
                 <Text className="text-white font-bold text-center">Enviar tudo</Text>
@@ -94,7 +75,19 @@ export default function ConfigScreen() {
           </View>
 
           <View className="rounded-lg border border-slate-100 bg-white p-4 shadow-sm">
-            <Text className="text-sm font-semibold text-gray-700">Sensores em tempo real</Text>
+            <View className="flex-row items-center justify-between">
+              <Text className="text-sm font-semibold text-gray-700">Sensores</Text>
+              <View className="flex-row items-center gap-2">
+                <Text className="text-xs text-gray-500">Tempo Real</Text>
+                <Switch
+                  value={isRealTime}
+                  onValueChange={setIsRealTime}
+                  trackColor={{ false: '#767577', true: '#10b981' }}
+                  thumbColor={isRealTime ? '#f4f3f4' : '#f4f3f4'}
+                />
+              </View>
+            </View>
+            
             <View className="mt-4 flex-row justify-center gap-2">
               {sensorBits.map((active, index) => (
                 <View
@@ -105,6 +98,14 @@ export default function ConfigScreen() {
                 />
               ))}
             </View>
+
+            {!isRealTime && (
+              <TouchableOpacity
+                onPress={getSensors}
+                className="mt-4 rounded-md bg-slate-900 py-2.5 active:opacity-70">
+                <Text className="text-center text-sm font-semibold text-white">Ler Sensores Agora</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           <View className="gap-3">

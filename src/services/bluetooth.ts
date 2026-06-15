@@ -20,17 +20,25 @@ function attachDataListener() {
   if (!device || dataSubscription) return;
 
   dataSubscription = device.onDataReceived((event) => {
-    buffer += event.data;
+    const data = event.data;
+    
+    if (data.includes('\n')) {
+      buffer += data;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
 
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-
-    lines.forEach((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-
-      listeners.forEach((callback) => callback(trimmed));
-    });
+      lines.forEach((line) => {
+        const trimmed = line.trim();
+        if (trimmed) {
+          listeners.forEach((callback) => callback(trimmed));
+        }
+      });
+    } else {
+      const trimmed = data.trim();
+      if (trimmed) {
+        listeners.forEach((callback) => callback(trimmed));
+      }
+    }
   });
 }
 
@@ -59,7 +67,7 @@ export async function disconnect() {
 
 export async function send(command: string) {
   if (!device) return;
-  //console.log('Enviando comando:', command);
+  console.log('Enviando comando:', command);
   await device.write(command.endsWith('\n') ? command : `${command}\n`);
 }
 
