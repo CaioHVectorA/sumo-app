@@ -114,6 +114,8 @@ int derivativo = 0;
 int DELTA_SPEED = 0;  // Valor do PWM a ser somado/subtraído de cada motor para efeito de alinhamento com o alvo
 
 volatile uint8_t MANUAL_MODE = 0; // Modo de controle manual ativo
+volatile int manual_left = 0;
+volatile int manual_right = 0;
 
 // CONFIGURA A ISR DO MICROSTART (MUDANÇA DE ESTADO)
 
@@ -351,22 +353,42 @@ void config(void) {
       printString("TEL;");
       printNumero(CODIGO_ERRO);
       printString(";");
-      printNumero(PWM_BASE_ATUAL);
-      printString(";");
-      if (DELTA_SPEED < 0) {
-        transmitByte('-');
-        printNumero(-DELTA_SPEED);
+      if (MANUAL_MODE) {
+        if (manual_left < 0) {
+          transmitByte('-');
+          printNumero(-manual_left);
+        } else {
+          printNumero(manual_left);
+        }
+        printString(";");
+        if (manual_right < 0) {
+          transmitByte('-');
+          printNumero(-manual_right);
+        } else {
+          printNumero(manual_right);
+        }
       } else {
-        printNumero(DELTA_SPEED);
+        printNumero(PWM_BASE_ATUAL);
+        printString(";");
+        if (DELTA_SPEED < 0) {
+          transmitByte('-');
+          printNumero(-DELTA_SPEED);
+        } else {
+          printNumero(DELTA_SPEED);
+        }
       }
       printString("\n");
     } else if (strcmp(cmd_buf, "MANUAL_ON") == 0) {
       MANUAL_MODE = 1;
+      manual_left = 0;
+      manual_right = 0;
       PORTD |= (1 << STBY);        // HABILITA A PONTE H (SAI DO STANDBY)
       PORTB &= ~(1 << LED_READY);  // Desliga o LED indicando que saiu do modo pronto
       printString("MANUAL_ON_OK\n");
     } else if (strcmp(cmd_buf, "MANUAL_OFF") == 0) {
       MANUAL_MODE = 0;
+      manual_left = 0;
+      manual_right = 0;
       SET_MOTORS(0, 0);
       PORTD &= ~(1 << STBY);       // DESABILITA A PONTE H (VOLTA PRO STANDBY)
       PORTB |= (1 << LED_READY);   // Acende o LED_READY de prontidão
@@ -382,6 +404,8 @@ void config(void) {
           right_val = atoi(comma1 + 1);
           *comma1 = ',';
         }
+        manual_left = left_val;
+        manual_right = right_val;
         SET_MOTORS(left_val, right_val);
         
         // Retorna a telemetria atualizada para atualização instantânea na tela manual do App

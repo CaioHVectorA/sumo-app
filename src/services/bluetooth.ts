@@ -21,7 +21,7 @@ function attachDataListener() {
 
   dataSubscription = device.onDataReceived((event) => {
     const data = event.data;
-    
+
     if (data.includes('\n')) {
       buffer += data;
       const lines = buffer.split('\n');

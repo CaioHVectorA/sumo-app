@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, PermissionsAndroid, Platform, ScrollView, Alert } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Text,
+  TouchableOpacity,
+  View,
+  PermissionsAndroid,
+  Platform,
+  ScrollView,
+  Alert,
+} from 'react-native';
 import RNBluetoothClassic from 'react-native-bluetooth-classic';
 
 import { Button } from '@/components/Button';
@@ -129,7 +139,7 @@ export default function ConnectScreen() {
             {connectedName && (
               <TouchableOpacity
                 onPress={handleDisconnect}
-                className="rounded-md bg-red-100 px-4 py-2 border border-red-200">
+                className="rounded-md border border-red-200 bg-red-100 px-4 py-2">
                 <Text className="text-sm font-semibold text-red-600">Desconectar</Text>
               </TouchableOpacity>
             )}

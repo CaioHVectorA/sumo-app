@@ -21,8 +21,7 @@ export default function Layout() {
             fontSize: 16,
             fontWeight: '500',
           },
-        }}
-      >
+        }}>
         <Drawer.Screen
           name="index"
           options={{
