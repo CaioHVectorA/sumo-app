@@ -25,11 +25,11 @@ export default function ConfigScreen() {
   const sensors = telemetry?.sensores ?? 0;
 
   const sensorBits = [
-    Boolean(sensors & (1 << 4)),
-    Boolean(sensors & (1 << 3)),
-    Boolean(sensors & (1 << 2)),
-    Boolean(sensors & (1 << 1)),
-    Boolean(sensors & (1 << 0)),
+    { active: Boolean(sensors & (1 << 4)), label: 'LE' },  // Lateral Esquerda
+    { active: Boolean(sensors & (1 << 3)), label: 'CE' },  // Centro Esquerda
+    { active: Boolean(sensors & (1 << 2)), label: 'C' },   // Central
+    { active: Boolean(sensors & (1 << 1)), label: 'CD' },  // Centro Direita
+    { active: false, label: 'LD (Inativo)', disabled: true }, // Lateral Direita - Desativado/Instável
   ];
 
   const fields = useMemo<FieldConfig[]>(
@@ -89,13 +89,21 @@ export default function ConfigScreen() {
             </View>
             
             <View className="mt-4 flex-row justify-center gap-2">
-              {sensorBits.map((active, index) => (
+              {sensorBits.map((sensor, index) => (
                 <View
                   key={index}
-                  className={`h-12 w-12 rounded-md border ${
-                    active ? 'border-green-600 bg-green-500' : 'border-zinc-700 bg-zinc-800'
+                  className={`h-12 w-12 rounded-md border items-center justify-center ${
+                    sensor.disabled 
+                      ? 'border-dashed border-red-300 bg-red-50/50 opacity-50' 
+                      : sensor.active 
+                        ? 'border-green-600 bg-green-500' 
+                        : 'border-zinc-700 bg-zinc-800'
                   }`}
-                />
+                >
+                  <Text className={`text-[10px] font-bold ${sensor.disabled ? 'text-red-400' : 'text-white'}`}>
+                    {sensor.label}
+                  </Text>
+                </View>
               ))}
             </View>
 

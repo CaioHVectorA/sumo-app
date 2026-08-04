@@ -51,6 +51,13 @@ export default function Layout() {
           }}
         />
         <Drawer.Screen
+          name="console"
+          options={{
+            title: 'Console Terminal',
+            drawerLabel: 'Console Terminal',
+          }}
+        />
+        <Drawer.Screen
           name="details"
           options={{
             drawerItemStyle: { display: 'none' },

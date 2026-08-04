@@ -19,7 +19,7 @@
 #define SENSOR_CENTRAL PC2  // A2
 #define SENSOR_CEN_ESQ PC3  // A3
 #define SENSOR_LAT_ESQ PC4  // A4
-#define SENSOR_MASK ((1 << SENSOR_LAT_DIR) | (1 << SENSOR_CEN_DIR) | (1 << SENSOR_CENTRAL) | (1 << SENSOR_CEN_ESQ) | (1 << SENSOR_LAT_ESQ))
+#define SENSOR_MASK ((1 << SENSOR_CEN_DIR) | (1 << SENSOR_CENTRAL) | (1 << SENSOR_CEN_ESQ) | (1 << SENSOR_LAT_ESQ)) // Right sensor (SENSOR_LAT_DIR) ignored due to instability
 
 #define DIR_IN1 PD5  // D5
 #define DIR_IN2 PD4  // D4
@@ -70,40 +70,23 @@ unsigned int PWM_BASE_DESEJADO = PWM_BASE;  // O PWM desejado por ser igual ao P
 
 uint8_t VARIANCIA = 0;
 uint8_t IS_FLAG = 1;
-const int8_t ERRO_LUT[32] = {
-  // OBS.: 10 é um valor especial que será usado para decidir virar para esquerda ou para direita
-  /* 00000 */ 10,  // nenhuma detecção
-  /* 00001 */ 6,   // OK - Só lateral
-  /* 00010 */ 2,   // OK
-  /* 00011 */ 3,   // OK
-  /* 00100 */ 0,   // OK
-  /* 00101 */ 4,   // erro ou bandeira
-  /* 00110 */ 1,   // OK
-  /* 00111 */ 2,   // OK
-  /* 01000 */ -2,  // OK
-  /* 01001 */ 4,   // erro ou bandeira
-  /* 01010 */ 10,  // erro ou bandeira
-  /* 01011 */ 4,   // erro ou bandeira
-  /* 01100 */ -1,  // OK
-  /* 01101 */ 4,   // erro ou bandeira
-  /* 01110 */ 0,   // OK
-  /* 01111 */ 4,   // erro ou bandeira
-  /* 10000 */ -6,  // OK - Só lateral
-  /* 10001 */ 10,  // erro ou bandeira
-  /* 10010 */ -4,  // erro ou bandeira
-  /* 10011 */ 4,   // erro ou bandeira
-  /* 10100 */ -4,  // erro ou bandeira
-  /* 10101 */ 10,  // erro ou bandeira
-  /* 10110 */ -4,  // erro ou bandeira
-  /* 10111 */ 4,   // erro ou bandeira
-  /* 11000 */ -3,  // OK
-  /* 11001 */ -4,  // erro ou bandeira
-  /* 11010 */ -4,  // erro ou bandeira
-  /* 11011 */ 10,  // erro ou bandeira
-  /* 11100 */ -2,  // OK
-  /* 11101 */ -4,  // erro ou bandeira
-  /* 11110 */ -4,  // erro ou bandeira
-  /* 11111 */ 10   // erro ou bandeira
+const int8_t ERRO_LUT_4[16] = { // 4‑bit sensor pattern (right sensor ignored)
+  /* 0000 */ 10,   // nenhum sensor ativo – trata como sem detecção
+  /* 0001 */ 0,    // Central only – avançar reto
+  /* 0010 */ 4,    // Centro‑esq – ajuste à esquerda
+  /* 0011 */ -4,   // Centro‑esq + Central – ajuste à esquerda
+  /* 0100 */ -2,   // Centro‑dir – ajuste à direita
+  /* 0101 */ 2,    // Centro‑dir + Central – ajuste à direita
+  /* 0110 */ -1,   // Centro‑dir + Centro‑esq – ambíguo, leve esquerda
+  /* 0111 */ 1,    // Todos exceto lateral – ambíguo, leve direita
+  /* 1000 */ -6,   // Lateral esquerda – virar fortemente à esquerda
+  /* 1001 */ 6,    // Lateral esquerda + Centro‑esq – forte esquerda
+  /* 1010 */ -4,   // Lateral esquerda + Central – esquerda moderada
+  /* 1011 */ 4,    // Lateral esquerda + Central + Centro‑esq – direita moderada
+  /* 1100 */ -3,   // Lateral esquerda + Centro‑dir – esquerda forte
+  /* 1101 */ 3,    // Lateral esquerda + Centro‑dir + Central – direita forte
+  /* 1110 */ -2,   // Lateral esquerda + Centro‑dir + Centro‑esq – esquerda leve
+  /* 1111 */ 2     // Todos sensores (exceto o defeituoso) – direita leve
 };
 
 uint8_t CODIGO_ERRO = 0;
@@ -594,7 +577,7 @@ int main(void) {
                               // receber o sinal de START (botão 2) do controle remoto
   while (READY_FLAG) {        // Aguarda o botão 2 (sinal de START) ser pressionado para entrar no loop.
     CODIGO_ERRO = PINC & SENSOR_MASK;
-    ERRO = ERRO_LUT[CODIGO_ERRO];
+    ERRO = ERRO_LUT_4[CODIGO_ERRO];
     ERRO_ANTIGO = ERRO;
 
     if (CONFIG_ENABLE)
@@ -608,7 +591,7 @@ int main(void) {
       TIME++;
 
       CODIGO_ERRO = PINC & SENSOR_MASK;
-      ERRO = ERRO_LUT[CODIGO_ERRO];
+      ERRO = ERRO_LUT_4[CODIGO_ERRO];
 
       if (ERRO == 10) {  // 10 indica configaração inválida dos sensores
         PWM_BASE_ATUAL = 0;
@@ -650,14 +633,14 @@ int main(void) {
         DELTA_SPEED = KP * ERRO + derivativo;
 
         // LÓGICA DE FREIO AO SE APROXIMAR DO INIMIGO
-        if (CODIGO_ERRO == 0) {  // 00100
+        if (CODIGO_ERRO == (1 << SENSOR_CENTRAL)) {  // Central sensor only (brake trigger)
           BREAK_COUNT++;
           if (BREAK_COUNT <= BREAK_TIME_1) {
             PWM_BASE_ATUAL = 0;
           } else {
             PWM_BASE_ATUAL = RAMP_DELTA(PWM_BASE_ATUAL, 1599);  // Modo de ataque
           }
-        } else if (CODIGO_ERRO != 14) {
+        } else {
           BREAK_COUNT = 0;
           PWM_BASE_ATUAL = RAMP_DELTA(PWM_BASE_ATUAL, PWM_BASE_DESEJADO);  // Modo de busca
         }
