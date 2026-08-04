@@ -25,10 +25,10 @@ export default function ConfigScreen() {
   const sensors = telemetry?.sensores ?? 0;
 
   const sensorBits = [
-    { active: Boolean(sensors & (1 << 4)), label: 'LE' },  // Lateral Esquerda
-    { active: Boolean(sensors & (1 << 3)), label: 'CE' },  // Centro Esquerda
-    { active: Boolean(sensors & (1 << 2)), label: 'C' },   // Central
-    { active: Boolean(sensors & (1 << 1)), label: 'CD' },  // Centro Direita
+    { active: Boolean(sensors & (1 << 4)), label: 'LE' },  // Lateral Esquerda (PC4)
+    { active: Boolean(sensors & (1 << 3)), label: 'CE' },  // Centro Esquerda (PC3)
+    { active: Boolean(sensors & (1 << 2)), label: 'C' },   // Central (PC2)
+    { active: Boolean(sensors & (1 << 1)), label: 'CD' },  // Centro Direita (PC1)
     { active: false, label: 'LD (Inativo)', disabled: true }, // Lateral Direita - Desativado/Instável
   ];
 

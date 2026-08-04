@@ -9,7 +9,7 @@
 
 #define KP 300
 #define KD 3000
-#define alpha 0.95
+#define alpha 0.85
 
 #define MICROSTART PB4  // PCINT4 // D12
 #define LED_READY PB5   // D13
@@ -70,23 +70,36 @@ unsigned int PWM_BASE_DESEJADO = PWM_BASE;  // O PWM desejado por ser igual ao P
 
 uint8_t VARIANCIA = 0;
 uint8_t IS_FLAG = 1;
-const int8_t ERRO_LUT_4[16] = { // 4‑bit sensor pattern (right sensor ignored)
-  /* 0000 */ 10,   // nenhum sensor ativo – trata como sem detecção
-  /* 0001 */ 0,    // Central only – avançar reto
-  /* 0010 */ 4,    // Centro‑esq – ajuste à esquerda
-  /* 0011 */ -4,   // Centro‑esq + Central – ajuste à esquerda
-  /* 0100 */ -2,   // Centro‑dir – ajuste à direita
-  /* 0101 */ 2,    // Centro‑dir + Central – ajuste à direita
-  /* 0110 */ -1,   // Centro‑dir + Centro‑esq – ambíguo, leve esquerda
-  /* 0111 */ 1,    // Todos exceto lateral – ambíguo, leve direita
-  /* 1000 */ -6,   // Lateral esquerda – virar fortemente à esquerda
-  /* 1001 */ 6,    // Lateral esquerda + Centro‑esq – forte esquerda
-  /* 1010 */ -4,   // Lateral esquerda + Central – esquerda moderada
-  /* 1011 */ 4,    // Lateral esquerda + Central + Centro‑esq – direita moderada
-  /* 1100 */ -3,   // Lateral esquerda + Centro‑dir – esquerda forte
-  /* 1101 */ 3,    // Lateral esquerda + Centro‑dir + Central – direita forte
-  /* 1110 */ -2,   // Lateral esquerda + Centro‑dir + Centro‑esq – esquerda leve
-  /* 1111 */ 2     // Todos sensores (exceto o defeituoso) – direita leve
+// LUT de 4 bits. Após >> 1 a disposição dos bits fica:
+//   bit3 = LE (Lateral Esquerda, PC4)
+//   bit2 = CE (Centro-Esquerda, PC3)   ← sensor LENTO
+//   bit1 = C  (Central, PC2)
+//   bit0 = CD (Centro-Direita, PC1)    ← sensor LENTO
+//
+// Convenção de sinal:
+//   ERRO negativo → alvo à ESQUERDA → girar à esquerda
+//   ERRO positivo → alvo à DIREITA  → girar à direita
+//   10 = valor especial (alvo perdido / padrão ambíguo)
+//
+// CE e CD são mais lentos, então seus erros são MENORES (±1)
+// para evitar overshoot causado pela latência desses sensores.
+const int8_t ERRO_LUT_4[16] = {
+  /* 0000  Nenhum sensor        */ 10,
+  /* 0001  CD                   */  1,   // lento → correção suave à direita
+  /* 0010  C                    */  0,   // alvo à frente e longe → reto
+  /* 0011  C + CD               */  1,   // alvo levemente à direita
+  /* 0100  CE                   */ -1,   // lento → correção suave à esquerda
+  /* 0101  CE + CD              */ 10,   // ambíguo (lados opostos sem centro)
+  /* 0110  CE + C               */ -1,   // alvo levemente à esquerda
+  /* 0111  CE + C + CD          */  0,   // alvo centralizado (3 sensores) → reto
+  /* 1000  LE                   */ -3,   // alvo à esquerda → correção moderada
+  /* 1001  LE + CD              */ 10,   // ambíguo (extremos sem centro)
+  /* 1010  LE + C               */ -2,   // alvo esquerda-centro
+  /* 1011  LE + C + CD          */ -1,   // alvo amplo, leve viés esquerda
+  /* 1100  LE + CE              */ -3,   // alvo claramente à esquerda
+  /* 1101  LE + CE + CD         */ 10,   // ambíguo
+  /* 1110  LE + CE + C          */ -1,   // alvo esquerda mas quase centrado
+  /* 1111  Todos                */  0,   // muito perto, todos ativados → reto
 };
 
 uint8_t CODIGO_ERRO = 0;
@@ -576,8 +589,8 @@ int main(void) {
   PORTB |= (1 << LED_READY);  // Indica que o microcontrolador está pronto para
                               // receber o sinal de START (botão 2) do controle remoto
   while (READY_FLAG) {        // Aguarda o botão 2 (sinal de START) ser pressionado para entrar no loop.
-    CODIGO_ERRO = PINC & SENSOR_MASK;
-    ERRO = ERRO_LUT_4[CODIGO_ERRO];
+    CODIGO_ERRO = PINC & SENSOR_MASK;            // valor cru para telemetria
+    ERRO = ERRO_LUT_4[CODIGO_ERRO >> 1];          // >> 1 para indexar 0-15
     ERRO_ANTIGO = ERRO;
 
     if (CONFIG_ENABLE)
@@ -590,20 +603,20 @@ int main(void) {
       TIME_FLAG = 0;
       TIME++;
 
-      CODIGO_ERRO = PINC & SENSOR_MASK;
-      ERRO = ERRO_LUT_4[CODIGO_ERRO];
+      CODIGO_ERRO = PINC & SENSOR_MASK;            // valor cru para telemetria
+      ERRO = ERRO_LUT_4[CODIGO_ERRO >> 1];          // >> 1 para indexar 0-15
 
-      if (ERRO == 10) {  // 10 indica configaração inválida dos sensores
+      if (ERRO == 10) {  // 10 indica alvo perdido ou padrão ambíguo
         PWM_BASE_ATUAL = 0;
-        if (ERRO_ANTIGO >= 0) {  // para decidir o lado de rotação
-          ERRO = 4;
-          DELTA_SPEED = 450;
+        if (ERRO_ANTIGO >= 0) {  // continua girando na última direção conhecida
+          ERRO = 3;
+          DELTA_SPEED = 400;
         } else {
-          ERRO = -4;
-          DELTA_SPEED = -450;
+          ERRO = -3;
+          DELTA_SPEED = -400;
         }
       } else {  // se os sensores estiverem com configuração válida
-        if ((abs(ERRO) == 4) && !ALREADY_FLAG_ATTACK && IS_FLAG) {
+        if ((abs(ERRO) >= 3) && !ALREADY_FLAG_ATTACK && IS_FLAG) {
 
           int direcao = ERRO / abs(ERRO);
 
@@ -633,7 +646,7 @@ int main(void) {
         DELTA_SPEED = KP * ERRO + derivativo;
 
         // LÓGICA DE FREIO AO SE APROXIMAR DO INIMIGO
-        if (CODIGO_ERRO == (1 << SENSOR_CENTRAL)) {  // Central sensor only (brake trigger)
+        if (CODIGO_ERRO == (1 << SENSOR_CENTRAL)) {  // Apenas sensor Central ativo (PC2) → freio
           BREAK_COUNT++;
           if (BREAK_COUNT <= BREAK_TIME_1) {
             PWM_BASE_ATUAL = 0;
