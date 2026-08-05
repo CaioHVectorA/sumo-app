@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Container } from '@/components/Container';
+import { StrategyVisualizer } from '@/components/StrategyVisualizer';
 import { send, onData } from '@/src/services/bluetooth';
 import { useRobot } from '@/src/hooks/useRobot';
 
@@ -266,6 +267,14 @@ export default function EstrategiasScreen() {
                 </View>
               )}
             </View>
+          </View>
+
+          {/* Visualizador de Trajetória */}
+          <View className="rounded-xl border border-slate-700 bg-slate-900 p-3 shadow-sm">
+            <Text className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 text-center">
+              Visualização da Trajetória
+            </Text>
+            <StrategyVisualizer strategyId={selectedStrat} variancia={selectedVariancia} />
           </View>
 
           {/* Seletor de Estratégias */}
