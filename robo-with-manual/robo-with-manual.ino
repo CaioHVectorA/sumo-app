@@ -14,12 +14,12 @@
 #define MICROSTART PB4  // PCINT4 // D12
 #define LED_READY PB5   // D13
 
-#define SENSOR_LAT_DIR PC0  // A0
-#define SENSOR_CEN_DIR PC1  // A1
-#define SENSOR_CENTRAL PC2  // A2
-#define SENSOR_CEN_ESQ PC3  // A3
-#define SENSOR_LAT_ESQ PC4  // A4
-#define SENSOR_MASK ((1 << SENSOR_CEN_DIR) | (1 << SENSOR_CENTRAL) | (1 << SENSOR_CEN_ESQ) | (1 << SENSOR_LAT_ESQ)) // Right sensor (SENSOR_LAT_DIR) ignored due to instability
+#define SENSOR_LAT_DIR PC0                                                                                           // A0
+#define SENSOR_CEN_DIR PC1                                                                                           // A1
+#define SENSOR_CENTRAL PC2                                                                                           // A2
+#define SENSOR_CEN_ESQ PC3                                                                                           // A3
+#define SENSOR_LAT_ESQ PC4                                                                                           // A4
+#define SENSOR_MASK ((1 << SENSOR_CEN_DIR) | (1 << SENSOR_CENTRAL) | (1 << SENSOR_CEN_ESQ) | (1 << SENSOR_LAT_ESQ))  // Right sensor (SENSOR_LAT_DIR) ignored due to instability
 
 #define DIR_IN1 PD5  // D5
 #define DIR_IN2 PD4  // D4
@@ -85,21 +85,21 @@ uint8_t IS_FLAG = 1;
 // para evitar overshoot causado pela latência desses sensores.
 const int8_t ERRO_LUT_4[16] = {
   /* 0000  Nenhum sensor        */ 10,
-  /* 0001  CD                   */  1,   // lento → correção suave à direita
-  /* 0010  C                    */  0,   // alvo à frente e longe → reto
-  /* 0011  C + CD               */  1,   // alvo levemente à direita
-  /* 0100  CE                   */ -1,   // lento → correção suave à esquerda
-  /* 0101  CE + CD              */ 10,   // ambíguo (lados opostos sem centro)
-  /* 0110  CE + C               */ -1,   // alvo levemente à esquerda
-  /* 0111  CE + C + CD          */  0,   // alvo centralizado (3 sensores) → reto
-  /* 1000  LE                   */ -3,   // alvo à esquerda → correção moderada
-  /* 1001  LE + CD              */ 10,   // ambíguo (extremos sem centro)
-  /* 1010  LE + C               */ -2,   // alvo esquerda-centro
-  /* 1011  LE + C + CD          */ -1,   // alvo amplo, leve viés esquerda
-  /* 1100  LE + CE              */ -3,   // alvo claramente à esquerda
-  /* 1101  LE + CE + CD         */ 10,   // ambíguo
-  /* 1110  LE + CE + C          */ -1,   // alvo esquerda mas quase centrado
-  /* 1111  Todos                */  0,   // muito perto, todos ativados → reto
+  /* 0001  CD                   */ 1,   // lento → correção suave à direita
+  /* 0010  C                    */ 0,   // alvo à frente e longe → reto
+  /* 0011  C + CD               */ 1,   // alvo levemente à direita
+  /* 0100  CE                   */ -1,  // lento → correção suave à esquerda
+  /* 0101  CE + CD              */ 10,  // ambíguo (lados opostos sem centro)
+  /* 0110  CE + C               */ -1,  // alvo levemente à esquerda
+  /* 0111  CE + C + CD          */ 0,   // alvo centralizado (3 sensores) → reto
+  /* 1000  LE                   */ -3,  // alvo à esquerda → correção moderada
+  /* 1001  LE + CD              */ 10,  // ambíguo (extremos sem centro)
+  /* 1010  LE + C               */ -2,  // alvo esquerda-centro
+  /* 1011  LE + C + CD          */ -1,  // alvo amplo, leve viés esquerda
+  /* 1100  LE + CE              */ -3,  // alvo claramente à esquerda
+  /* 1101  LE + CE + CD         */ 10,  // ambíguo
+  /* 1110  LE + CE + C          */ -1,  // alvo esquerda mas quase centrado
+  /* 1111  Todos                */ 0,   // muito perto, todos ativados → reto
 };
 
 uint8_t CODIGO_ERRO = 0;
@@ -109,7 +109,7 @@ int derivativo = 0;
 
 int DELTA_SPEED = 0;  // Valor do PWM a ser somado/subtraído de cada motor para efeito de alinhamento com o alvo
 
-volatile uint8_t MANUAL_MODE = 0; // Modo de controle manual ativo
+volatile uint8_t MANUAL_MODE = 0;  // Modo de controle manual ativo
 volatile int manual_left = 0;
 volatile int manual_right = 0;
 
@@ -123,8 +123,8 @@ void MICROSTART_ISR_CONFIG(void) {
 // ISR DO MICROSTART
 
 ISR(PCINT0_vect) {
-  if (MANUAL_MODE) return; // Ignora os botões do controle remoto/start físico no modo manual
-  
+  if (MANUAL_MODE) return;  // Ignora os botões do controle remoto/start físico no modo manual
+
   if ((PINB & (1 << MICROSTART)) == 0) {  // STOP
     PORTD &= ~(1 << STBY);                // AQUI DESABILITA O STANDBY DOS MOTORES
     SET_MOTORS(0, 0);
@@ -287,7 +287,7 @@ void uart_process(void) {
   while (uart_available()) {
     char c = uart_read();
 
-    if (c == '\r') continue; // Ignora Carriage Return (\r)
+    if (c == '\r') continue;  // Ignora Carriage Return (\r)
 
     if (c == '\n') {
       cmd_buf[cmd_len] = '\0';  // finaliza string
@@ -386,8 +386,8 @@ void config(void) {
       manual_left = 0;
       manual_right = 0;
       SET_MOTORS(0, 0);
-      PORTD &= ~(1 << STBY);       // DESABILITA A PONTE H (VOLTA PRO STANDBY)
-      PORTB |= (1 << LED_READY);   // Acende o LED_READY de prontidão
+      PORTD &= ~(1 << STBY);      // DESABILITA A PONTE H (VOLTA PRO STANDBY)
+      PORTB |= (1 << LED_READY);  // Acende o LED_READY de prontidão
       printString("MANUAL_OFF_OK\n");
     } else if (strncmp(cmd_buf, "M,", 2) == 0) {
       if (MANUAL_MODE) {
@@ -403,7 +403,7 @@ void config(void) {
         manual_left = left_val;
         manual_right = right_val;
         SET_MOTORS(left_val, right_val);
-        
+
         // Retorna a telemetria atualizada para atualização instantânea na tela manual do App
         printString("TEL;");
         printNumero(CODIGO_ERRO);
@@ -523,9 +523,13 @@ void config(void) {
     }
   }
 }
-
+void stop(int test) {
+  _delay_ms(test);
+  SET_MOTORS(0, 0);
+  _delay_ms(10000000000000);
+}
 // FUNÇÃO PARA EXECUTAR AS ESTRATEGIAS
-
+int giro_eixo_time = 75;
 void EXECUTA_ESTRATEGIA(int EST) {
 
   if (EST == 0) {
@@ -536,25 +540,29 @@ void EXECUTA_ESTRATEGIA(int EST) {
     // ESTRATÉGIA A PARAMETRIZADA CONFORME VARIANCIA
     // Gira à DIREITA (sensor ativo é o da ESQUERDA)
 
-    if (VARIANCIA == 0) {  // CURTO
+    if (VARIANCIA == 0) {       // CURTO
       SET_MOTORS(1599, -1599);  // giro à direita
-      _delay_ms(100);
-      SET_MOTORS(300, 1599);    // curva à esquerda (saída para a esquerda)
-      _delay_ms(550);
+      _delay_ms(100 + giro_eixo_time);
+      SET_MOTORS(450, 1599);  // curva à esquerda (saída para a esquerda)
+      _delay_ms(550 + giro_eixo_time);
     }
 
     else if (VARIANCIA == 1) {  // MÉDIO
       SET_MOTORS(1599, -1599);  // giro à direita
-      _delay_ms(70);
-      SET_MOTORS(700, 1599);    // curva suave à esquerda
-      _delay_ms(400);
+      _delay_ms(80 + giro_eixo_time);
+      SET_MOTORS(600, 1599);  // curva suave à esquerda
+      _delay_ms(500);
+      SET_MOTORS(800, 1599);  // curva suave à esquerda
+      _delay_ms(500);
     }
 
     else if (VARIANCIA == 2) {  // FUNDO
       SET_MOTORS(1599, -1599);  // giro à direita
-      _delay_ms(70);
-      SET_MOTORS(850, 1599);    // avanço longo com leve viés à esquerda
-      _delay_ms(580);
+      _delay_ms(100 + giro_eixo_time);
+      SET_MOTORS(700, 1599);  // curva suave à esquerda
+      _delay_ms(740);
+      // SET_MOTORS(800, 1599);  // curva suave à esquerda
+      // _delay_ms(400);
     }
   }
 
@@ -562,15 +570,13 @@ void EXECUTA_ESTRATEGIA(int EST) {
     // Gira à DIREITA (sensor ativo é o da ESQUERDA)
 
     SET_MOTORS(1100, -1100);  // giro parado à direita
-    _delay_ms(48);
-
+    _delay_ms(48 + giro_eixo_time);
     SET_MOTORS(1500, 1500);  // anda reto
-    _delay_ms(120);
-
+    _delay_ms(260);
     SET_MOTORS(200, 1400);  // diagonal (viés à esquerda na saída)
-    _delay_ms(182);
+    _delay_ms(230);
     SET_MOTORS(1500, 1500);
-    _delay_ms(500);
+    _delay_ms(300);
   }
 
   else if (EST == 3) {
@@ -612,11 +618,11 @@ int main(void) {
   sei();  // Habilita todas ISRs
 
   DDRB |= (1 << LED_READY);
-  PORTB |= (1 << LED_READY);  // Indica que o microcontrolador está pronto para
-                              // receber o sinal de START (botão 2) do controle remoto
-  while (READY_FLAG) {        // Aguarda o botão 2 (sinal de START) ser pressionado para entrar no loop.
-    CODIGO_ERRO = PINC & SENSOR_MASK;            // valor cru para telemetria
-    ERRO = ERRO_LUT_4[CODIGO_ERRO >> 1];          // >> 1 para indexar 0-15
+  PORTB |= (1 << LED_READY);              // Indica que o microcontrolador está pronto para
+                                          // receber o sinal de START (botão 2) do controle remoto
+  while (READY_FLAG) {                    // Aguarda o botão 2 (sinal de START) ser pressionado para entrar no loop.
+    CODIGO_ERRO = PINC & SENSOR_MASK;     // valor cru para telemetria
+    ERRO = ERRO_LUT_4[CODIGO_ERRO >> 1];  // >> 1 para indexar 0-15
     ERRO_ANTIGO = ERRO;
 
     if (CONFIG_ENABLE)
@@ -629,8 +635,8 @@ int main(void) {
       TIME_FLAG = 0;
       TIME++;
 
-      CODIGO_ERRO = PINC & SENSOR_MASK;            // valor cru para telemetria
-      ERRO = ERRO_LUT_4[CODIGO_ERRO >> 1];          // >> 1 para indexar 0-15
+      CODIGO_ERRO = PINC & SENSOR_MASK;     // valor cru para telemetria
+      ERRO = ERRO_LUT_4[CODIGO_ERRO >> 1];  // >> 1 para indexar 0-15
 
       if (ERRO == 10) {  // 10 indica alvo perdido ou padrão ambíguo
         PWM_BASE_ATUAL = 0;
