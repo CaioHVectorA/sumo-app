@@ -10,6 +10,7 @@
     "lint": "eslint \"**/*.{js,jsx,ts,tsx}\" && prettier -c \"**/*.{js,jsx,ts,tsx,json}\"",
     "format": "eslint \"**/*.{js,jsx,ts,tsx}\" --fix && prettier \"**/*.{js,jsx,ts,tsx,json}\" --write",
     "web": "expo start --web",
+    "build:apk": "eas build --platform android --profile preview",
     "build:development": "eas build --platform android --profile development",
     "build:final": "eas build --platform android --profile production"
   },
