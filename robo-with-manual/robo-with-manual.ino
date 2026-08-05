@@ -534,38 +534,40 @@ void EXECUTA_ESTRATEGIA(int EST) {
 
   else if (EST == 1) {
     // ESTRATÉGIA A PARAMETRIZADA CONFORME VARIANCIA
+    // Gira à DIREITA (sensor ativo é o da ESQUERDA)
 
     if (VARIANCIA == 0) {  // CURTO
-      SET_MOTORS(-1599, 1599);
+      SET_MOTORS(1599, -1599);  // giro à direita
       _delay_ms(100);
-      SET_MOTORS(1599, 300);
+      SET_MOTORS(300, 1599);    // curva à esquerda (saída para a esquerda)
       _delay_ms(550);
     }
 
     else if (VARIANCIA == 1) {  // MÉDIO
-      SET_MOTORS(-1599, 1599);
+      SET_MOTORS(1599, -1599);  // giro à direita
       _delay_ms(70);
-      SET_MOTORS(1599, 700);
+      SET_MOTORS(700, 1599);    // curva suave à esquerda
       _delay_ms(400);
     }
 
     else if (VARIANCIA == 2) {  // FUNDO
-      SET_MOTORS(-1599, 1599);
+      SET_MOTORS(1599, -1599);  // giro à direita
       _delay_ms(70);
-      SET_MOTORS(1599, 850);
+      SET_MOTORS(850, 1599);    // avanço longo com leve viés à esquerda
       _delay_ms(580);
     }
   }
 
   else if (EST == 2) {
+    // Gira à DIREITA (sensor ativo é o da ESQUERDA)
 
-    SET_MOTORS(-1100, 1100);  // giro parado
+    SET_MOTORS(1100, -1100);  // giro parado à direita
     _delay_ms(48);
 
     SET_MOTORS(1500, 1500);  // anda reto
     _delay_ms(120);
 
-    SET_MOTORS(1400, 200);  // diagonal
+    SET_MOTORS(200, 1400);  // diagonal (viés à esquerda na saída)
     _delay_ms(182);
     SET_MOTORS(1500, 1500);
     _delay_ms(500);

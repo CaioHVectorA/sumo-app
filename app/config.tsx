@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View, Switch } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import { Button } from '@/components/Button';
 import { Container } from '@/components/Container';
@@ -14,6 +15,7 @@ type FieldConfig = {
 };
 
 export default function ConfigScreen() {
+  const router = useRouter();
   const [pwmBase, setPwmBase] = useState('1300');
   const [pwmMaxDelta, setPwmMaxDelta] = useState('8');
   const [breakTime1, setBreakTime1] = useState('250');
@@ -93,9 +95,9 @@ export default function ConfigScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => send('ESTRATEGIA_A')}
-                className="rounded-md bg-slate-900 px-6 py-3 shadow-sm active:opacity-70">
-                <Text className="text-center font-bold text-white">Estratégia A</Text>
+                onPress={() => router.push('/estrategias')}
+                className="rounded-md bg-sky-600 px-6 py-3 shadow-sm active:opacity-70">
+                <Text className="text-center font-bold text-white">Página de Estratégias</Text>
               </TouchableOpacity>
             </View>
           </View>

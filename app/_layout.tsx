@@ -36,6 +36,13 @@ export default function Layout() {
           }}
         />
         <Drawer.Screen
+          name="estrategias"
+          options={{
+            title: 'Estratégias',
+            drawerLabel: 'Estratégias',
+          }}
+        />
+        <Drawer.Screen
           name="config"
           options={{
             title: 'Configuração',
