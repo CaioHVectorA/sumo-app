@@ -71,6 +71,39 @@ export async function send(command: string) {
   await device.write(command.endsWith('\n') ? command : `${command}\n`);
 }
 
+export function sendWithTimeout(
+  command: string,
+  matcher?: (line: string) => boolean,
+  timeoutMs = 3000
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribe: (() => void) | null = null;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe?.();
+    };
+
+    timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Sem resposta do robô (Timeout de 3s). Solicitação cancelada.'));
+    }, timeoutMs);
+
+    unsubscribe = onData((line) => {
+      if (!matcher || matcher(line)) {
+        cleanup();
+        resolve(line);
+      }
+    });
+
+    send(command).catch((err) => {
+      cleanup();
+      reject(err);
+    });
+  });
+}
+
 export function onData(callback: DataListener) {
   listeners.add(callback);
   attachDataListener();

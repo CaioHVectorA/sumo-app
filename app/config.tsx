@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Text, TextInput, TouchableOpacity, View, Switch } from 'react-native';
+import {
+  ScrollView,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  Vibration,
+  View,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { Button } from '@/components/Button';
 import { Container } from '@/components/Container';
-import { onData, send } from '@/src/services/bluetooth';
 import { useRobot } from '@/src/hooks/useRobot';
+import { onData, sendWithTimeout } from '@/src/services/bluetooth';
 
 type FieldConfig = {
   key: string;
@@ -22,15 +29,17 @@ export default function ConfigScreen() {
   const [breakTime3, setBreakTime3] = useState('250');
   const [timeBeforeMoving, setTimeBeforeMoving] = useState('1500');
   const [variancia, setVariancia] = useState('2');
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [isError, setIsError] = useState(false);
   const { status, telemetry, isRealTime, setIsRealTime, getSensors } = useRobot();
 
   const sensors = telemetry?.sensores ?? 0;
 
   const sensorBits = [
-    { active: Boolean(sensors & (1 << 4)), label: 'LE' },  // Lateral Esquerda (PC4)
-    { active: Boolean(sensors & (1 << 3)), label: 'CE' },  // Centro Esquerda (PC3)
-    { active: Boolean(sensors & (1 << 2)), label: 'C' },   // Central (PC2)
-    { active: Boolean(sensors & (1 << 1)), label: 'CD' },  // Centro Direita (PC1)
+    { active: Boolean(sensors & (1 << 4)), label: 'LE' }, // Lateral Esquerda (PC4)
+    { active: Boolean(sensors & (1 << 3)), label: 'CE' }, // Centro Esquerda (PC3)
+    { active: Boolean(sensors & (1 << 2)), label: 'C' }, // Central (PC2)
+    { active: Boolean(sensors & (1 << 1)), label: 'CD' }, // Centro Direita (PC1)
     { active: false, label: 'LD (Inativo)', disabled: true }, // Lateral Direita - Desativado/Instável
   ];
 
@@ -66,14 +75,84 @@ export default function ConfigScreen() {
     [pwmBase, pwmMaxDelta, breakTime1, breakTime3, timeBeforeMoving, variancia]
   );
 
+  const triggerHapticSent = () => {
+    try {
+      Vibration.vibrate(40);
+    } catch {}
+  };
+
+  const triggerHapticReceived = () => {
+    try {
+      Vibration.vibrate([0, 50, 50, 50]);
+    } catch {}
+  };
+
+  const triggerHapticError = () => {
+    try {
+      Vibration.vibrate([0, 100, 50, 100]);
+    } catch {}
+  };
+
+  useEffect(() => {
+    const unsubscribe = onData((line) => {
+      if (line.includes('=') || line.includes('_OK') || line.startsWith('STATUS')) {
+        triggerHapticReceived();
+        setIsError(false);
+        setFeedbackMessage(`Confirmado: ${line}`);
+        const timeout = setTimeout(() => setFeedbackMessage(null), 4000);
+        return () => clearTimeout(timeout);
+      }
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
   const sendParam = async (key: string, value: string) => {
-    await send(`${key} = ${value}`);
+    triggerHapticSent();
+    setIsError(false);
+    setFeedbackMessage(`Enviando ${key}... (Aguardando confirmação em até 3s)`);
+
+    try {
+      await sendWithTimeout(
+        `${key} = ${value}`,
+        (line) => line.includes(key) || line.includes('='),
+        3000
+      );
+      setIsError(false);
+      setFeedbackMessage(`✓ ${key} atualizado com sucesso!`);
+    } catch (err: unknown) {
+      triggerHapticError();
+      setIsError(true);
+      const msg = err instanceof Error ? err.message : 'Sem resposta do robô';
+      setFeedbackMessage(`✗ ${msg}`);
+    }
   };
 
   const sendAll = async () => {
+    triggerHapticSent();
+    setIsError(false);
+    setFeedbackMessage('Enviando todas as configurações...');
+
     for (const field of fields) {
-      await sendParam(field.key, field.value);
+      try {
+        await sendWithTimeout(
+          `${field.key} = ${field.value}`,
+          (line) => line.includes(field.key) || line.includes('='),
+          3000
+        );
+      } catch (err: unknown) {
+        triggerHapticError();
+        setIsError(true);
+        const msg = err instanceof Error ? err.message : 'Sem resposta do robô';
+        setFeedbackMessage(`✗ Falha ao enviar ${field.key}: ${msg}`);
+        return;
+      }
     }
+
+    setIsError(false);
+    setFeedbackMessage('✓ Todas as configurações enviadas e confirmadas!');
   };
 
   return (
@@ -95,12 +174,27 @@ export default function ConfigScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => router.push('/estrategias')}
+                onPress={() => router.push('/estrategias' as any)}
                 className="rounded-md bg-sky-600 px-6 py-3 shadow-sm active:opacity-70">
                 <Text className="text-center font-bold text-white">Página de Estratégias</Text>
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* Feedback Tátil/Visual com Suporte a Timeout */}
+          {feedbackMessage ? (
+            <View
+              className={`rounded-lg border p-3 ${
+                isError ? 'border-rose-300 bg-rose-50' : 'border-emerald-200 bg-emerald-50'
+              }`}>
+              <Text
+                className={`text-center text-xs font-semibold ${
+                  isError ? 'text-rose-700' : 'text-emerald-700'
+                }`}>
+                {feedbackMessage}
+              </Text>
+            </View>
+          ) : null}
 
           <View className="rounded-lg border border-slate-100 bg-white p-4 shadow-sm">
             <View className="flex-row items-center justify-between">
@@ -120,15 +214,15 @@ export default function ConfigScreen() {
               {sensorBits.map((sensor, index) => (
                 <View
                   key={index}
-                  className={`h-12 w-12 rounded-md border items-center justify-center ${
-                    sensor.disabled 
-                      ? 'border-dashed border-red-300 bg-red-50/50 opacity-50' 
-                      : sensor.active 
-                        ? 'border-green-600 bg-green-500' 
+                  className={`h-12 w-12 items-center justify-center rounded-md border ${
+                    sensor.disabled
+                      ? 'border-dashed border-red-300 bg-red-50/50 opacity-50'
+                      : sensor.active
+                        ? 'border-green-600 bg-green-500'
                         : 'border-zinc-700 bg-zinc-800'
-                  }`}
-                >
-                  <Text className={`text-[10px] font-bold ${sensor.disabled ? 'text-red-400' : 'text-white'}`}>
+                  }`}>
+                  <Text
+                    className={`text-[10px] font-bold ${sensor.disabled ? 'text-red-400' : 'text-white'}`}>
                     {sensor.label}
                   </Text>
                 </View>
