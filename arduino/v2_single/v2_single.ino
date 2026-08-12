@@ -123,6 +123,7 @@ struct StrategyStep {
   int motorEsq;
   int motorDir;
   unsigned long timeMs;
+  int accelStep;
 };
 
 #define MAX_CUSTOM_STEPS 16
@@ -369,9 +370,10 @@ void config(void) {
   }
   // 4. TESTAR PASSO DE MOVIMENTO V2: TEST_STEP,<esq>,<dir>,<tempoMs>
   else if (strncmp(cmd_buf, "TEST_STEP,", 10) == 0) {
-    int esq = 0, dir = 0;
+    int esq = 0, dir = 0, accel = 0;
     unsigned long t = 0;
-    sscanf(cmd_buf + 10, "%d,%d,%lu", &esq, &dir, &t);
+    int parsed = sscanf(cmd_buf + 10, "%d,%d,%lu,%d", &esq, &dir, &t, &accel);
+    if (parsed < 4) accel = 0;
 
     PORTD |= (1 << STBY); // Habilita a ponte H (sai do standby)
     PORTB &= ~(1 << LED_READY);
@@ -380,11 +382,16 @@ void config(void) {
     customSteps[0].motorEsq = esq;
     customSteps[0].motorDir = dir;
     customSteps[0].timeMs = t;
+    customSteps[0].accelStep = accel;
 
     currentStepIdx = 0;
     stepStartTime = get_ms();
     TEST_MODE_ACTIVE = 1;
-    SET_MOTORS(esq, dir);
+    if (accel <= 0) {
+      SET_MOTORS(esq, dir);
+    } else {
+      SET_MOTORS(0, 0);
+    }
 
     printString("STEP_OK\n");
   }
@@ -397,13 +404,15 @@ void config(void) {
     customStepCount = 0;
     while (ptr && customStepCount < count && customStepCount < MAX_CUSTOM_STEPS) {
       ptr++;
-      int esq = 0, dir = 0;
+      int esq = 0, dir = 0, accel = 0;
       unsigned long t = 0;
-      sscanf(ptr, "%d,%d,%lu", &esq, &dir, &t);
+      int parsed = sscanf(ptr, "%d,%d,%lu,%d", &esq, &dir, &t, &accel);
+      if (parsed < 4) accel = 0;
 
       customSteps[customStepCount].motorEsq = esq;
       customSteps[customStepCount].motorDir = dir;
       customSteps[customStepCount].timeMs = t;
+      customSteps[customStepCount].accelStep = accel;
       customStepCount++;
 
       ptr = strchr(ptr, ';');
@@ -415,7 +424,11 @@ void config(void) {
       currentStepIdx = 0;
       stepStartTime = get_ms();
       TEST_MODE_ACTIVE = 1;
-      SET_MOTORS(customSteps[0].motorEsq, customSteps[0].motorDir);
+      if (customSteps[0].accelStep <= 0) {
+        SET_MOTORS(customSteps[0].motorEsq, customSteps[0].motorDir);
+      } else {
+        SET_MOTORS(0, 0);
+      }
       printString("STRAT_OK\n");
     }
   }
@@ -508,6 +521,9 @@ void EXECUTA_ESTRATEGIA(int EST) {
 }
 
 // --- ATUALIZAÇÃO DE TESTES V2 ---
+static int currentTestPwmEsq = 0;
+static int currentTestPwmDir = 0;
+
 void update_test_mode(void) {
   if (!TEST_MODE_ACTIVE) return;
 
@@ -516,11 +532,39 @@ void update_test_mode(void) {
     unsigned long duration = customSteps[currentStepIdx].timeMs;
     if (duration == 0) duration = 50; // Duração mínima de segurança se tempo for 0
 
+    int targetEsq = customSteps[currentStepIdx].motorEsq;
+    int targetDir = customSteps[currentStepIdx].motorDir;
+    int accel = customSteps[currentStepIdx].accelStep;
+
+    if (accel > 0) {
+      if (currentTestPwmEsq < targetEsq) {
+        currentTestPwmEsq += accel;
+        if (currentTestPwmEsq > targetEsq) currentTestPwmEsq = targetEsq;
+      } else if (currentTestPwmEsq > targetEsq) {
+        currentTestPwmEsq -= accel;
+        if (currentTestPwmEsq < targetEsq) currentTestPwmEsq = targetEsq;
+      }
+
+      if (currentTestPwmDir < targetDir) {
+        currentTestPwmDir += accel;
+        if (currentTestPwmDir > targetDir) currentTestPwmDir = targetDir;
+      } else if (currentTestPwmDir > targetDir) {
+        currentTestPwmDir -= accel;
+        if (currentTestPwmDir < targetDir) currentTestPwmDir = targetDir;
+      }
+
+      SET_MOTORS(currentTestPwmEsq, currentTestPwmDir);
+    }
+
     if (now - stepStartTime >= duration) {
       currentStepIdx++;
+      currentTestPwmEsq = 0;
+      currentTestPwmDir = 0;
       if (currentStepIdx < customStepCount) {
         stepStartTime = now;
-        SET_MOTORS(customSteps[currentStepIdx].motorEsq, customSteps[currentStepIdx].motorDir);
+        if (customSteps[currentStepIdx].accelStep <= 0) {
+          SET_MOTORS(customSteps[currentStepIdx].motorEsq, customSteps[currentStepIdx].motorDir);
+        }
       } else {
         SET_MOTORS(0, 0);
         PORTD &= ~(1 << STBY); // Volta pro STBY após o teste (desativa ponte H)
@@ -534,6 +578,8 @@ void update_test_mode(void) {
     PORTD &= ~(1 << STBY);
     PORTB |= (1 << LED_READY);
     TEST_MODE_ACTIVE = 0;
+    currentTestPwmEsq = 0;
+    currentTestPwmDir = 0;
     printString("TEST_FINISHED\n");
   }
 }

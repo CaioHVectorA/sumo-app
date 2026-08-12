@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { PanResponder, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -8,8 +8,10 @@ import { send } from '@/src/services/bluetooth';
 
 // Configurações físicas do Joystick Analógico
 const JOYSTICK_SIZE = 180;
-const KNOB_SIZE = 64;
+const KNOB_SIZE = 60;
 const MAX_RADIUS = JOYSTICK_SIZE / 2;
+
+type AccelMode = 'direct' | 'smooth' | 'progressive' | 'exponential' | 'scurve';
 
 const SPEED_PRESETS = [
   { label: '25%', percent: 0.25 },
@@ -18,25 +20,106 @@ const SPEED_PRESETS = [
   { label: '100%', percent: 1.0 },
 ];
 
+const ACCEL_PROFILES: { key: AccelMode; label: string; desc: string }[] = [
+  { key: 'direct', label: 'Direto (0ms)', desc: 'Resposta instantânea 1:1 sem filtro' },
+  { key: 'smooth', label: 'Suave (~150ms)', desc: 'Rampa rápida sem trancos nos motores' },
+  {
+    key: 'progressive',
+    label: 'Progressivo (~300ms)',
+    desc: 'Arranque gradual suave para manobras',
+  },
+  {
+    key: 'exponential',
+    label: 'Esportivo (Expo)',
+    desc: 'Alta precisão no centro + potência nas bordas',
+  },
+  { key: 'scurve', label: 'Curva S (S-Curve)', desc: 'Transição ultra suave de partida e parada' },
+];
+
 export default function ManualScreen() {
-  const [manualEnabled, setManualEnabled] = useState(false);
+  const [manualEnabled, setManualEnabled] = useState(true);
   const [controlMode, setControlMode] = useState<'buttons' | 'joystick'>('buttons');
-  const [speedPercent, setSpeedPercent] = useState<number>(0.6); // Padrão 60%
+  const [speedPercent, setSpeedPercent] = useState<number>(0.6);
+  const [accelMode, setAccelMode] = useState<AccelMode>('smooth');
+  const [scrollEnabled, setScrollEnabled] = useState(true);
   const [activeDirection, setActiveDirection] = useState<string>('PARADO');
   const { telemetry } = useRobot();
 
-  // Armazena a velocidade enviada aos motores para evitar redundâncias
+  const targetSpeed = useRef({ left: 0, right: 0 });
   const currentSpeed = useRef({ left: 0, right: 0 });
+  const rampTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const maxAllowedPWM = Math.round(1599 * speedPercent);
 
+  // Envia MANUAL_ON ao abrir a tela para liberar comandos no firmware do Arduino
+  useEffect(() => {
+    send('MANUAL_ON', true);
+    setManualEnabled(true);
+
+    return () => {
+      send('M,0,0', true);
+    };
+  }, []);
+
+  // --- Motor de Rampa e Aceleração Inteligente (Dispara apenas se a velocidade mudar) ---
+  useEffect(() => {
+    rampTimer.current = setInterval(() => {
+      if (!manualEnabled) return;
+
+      let curL = currentSpeed.current.left;
+      let curR = currentSpeed.current.right;
+      const tgtL = targetSpeed.current.left;
+      const tgtR = targetSpeed.current.right;
+
+      // Se a velocidade atual já é igual à velocidade desejada, NÃO envia dados repetidos para não saturar a UART
+      if (curL === tgtL && curR === tgtR) return;
+
+      if (accelMode === 'direct') {
+        curL = tgtL;
+        curR = tgtR;
+      } else {
+        let step = 350;
+
+        if (accelMode === 'progressive') {
+          step = 180;
+        } else if (accelMode === 'exponential') {
+          const diffL = Math.abs(tgtL - curL);
+          const diffR = Math.abs(tgtR - curR);
+          step = Math.max(120, Math.round(Math.max(diffL, diffR) * 0.45));
+        } else if (accelMode === 'scurve') {
+          const diffL = Math.abs(tgtL - curL);
+          const diffR = Math.abs(tgtR - curR);
+          const maxDiff = Math.max(diffL, diffR);
+          const ratio = maxDiff / 1599;
+          const factor = 0.5 * (1 - Math.cos(Math.PI * ratio));
+          step = Math.max(90, Math.round(160 + factor * 400));
+        }
+
+        if (curL < tgtL) curL = Math.min(tgtL, curL + step);
+        else if (curL > tgtL) curL = Math.max(tgtL, curL - step);
+
+        if (curR < tgtR) curR = Math.min(tgtR, curR + step);
+        else if (curR > tgtR) curR = Math.max(tgtR, curR - step);
+      }
+
+      currentSpeed.current = { left: curL, right: curR };
+      send(`M,${curL},${curR}`);
+    }, 35); // Loop a ~28Hz
+
+    return () => {
+      if (rampTimer.current) clearInterval(rampTimer.current);
+    };
+  }, [manualEnabled, accelMode]);
+
   const enableManual = async () => {
-    await send('MANUAL_ON');
+    await send('MANUAL_ON', true);
     setManualEnabled(true);
   };
 
   const disableManual = async () => {
-    await send('MANUAL_OFF');
+    targetSpeed.current = { left: 0, right: 0 };
+    currentSpeed.current = { left: 0, right: 0 };
+    await send('MANUAL_OFF', true);
     setManualEnabled(false);
   };
 
@@ -48,7 +131,6 @@ export default function ManualScreen() {
     }
   };
 
-  // Ajuste personalizado de velocidade
   const changeSpeedBy = (delta: number) => {
     setSpeedPercent((prev) => {
       const next = Math.round((prev + delta) * 100) / 100;
@@ -56,15 +138,25 @@ export default function ManualScreen() {
     });
   };
 
-  const drive = async (rawLeft: number, rawRight: number, directionLabel?: string) => {
+  const drive = (rawLeft: number, rawRight: number, directionLabel?: string) => {
     if (!manualEnabled) return;
 
-    // Aplica o limite percentual de velocidade ajustado
-    const left = Math.round(rawLeft * speedPercent);
-    const right = Math.round(rawRight * speedPercent);
+    let left = Math.round(rawLeft * speedPercent);
+    let right = Math.round(rawRight * speedPercent);
 
-    if (currentSpeed.current.left === left && currentSpeed.current.right === right) return;
-    currentSpeed.current = { left, right };
+    if (accelMode === 'exponential') {
+      const normL = left / 1599;
+      const normR = right / 1599;
+      left = Math.round(Math.sign(normL) * normL * normL * 1599);
+      right = Math.round(Math.sign(normR) * normR * normR * 1599);
+    }
+
+    // Filtro de banda morta (deadband): se a alteração for insignificante (< 35 PWM), ignora ruído
+    const diffL = Math.abs(left - targetSpeed.current.left);
+    const diffR = Math.abs(right - targetSpeed.current.right);
+    if (left !== 0 && right !== 0 && diffL < 35 && diffR < 35) return;
+
+    targetSpeed.current = { left, right };
 
     if (directionLabel) {
       setActiveDirection(directionLabel);
@@ -72,22 +164,30 @@ export default function ManualScreen() {
       setActiveDirection('PARADO');
     }
 
-    await send(`M,${left},${right}`);
+    if (accelMode === 'direct') {
+      currentSpeed.current = { left, right };
+      send(`M,${left},${right}`);
+    }
   };
 
-  const stop = () => drive(0, 0, 'PARADO');
+  const stop = () => {
+    targetSpeed.current = { left: 0, right: 0 };
+    currentSpeed.current = { left: 0, right: 0 };
+    setActiveDirection('PARADO');
+    send('M,0,0', true);
+  };
 
-  // --- Lógica do Joystick Analógico ---
+  // --- Lógica do Joystick Analógico 360° com Bloqueio do Scroll ---
   const [knobPos, setKnobPos] = useState({ x: 0, y: 0 });
 
-  const handleJoystickMove = (x: number, y: number) => {
-    const distance = Math.sqrt(x * x + y * y);
-    let targetX = x;
-    let targetY = y;
+  const handleJoystickMove = (dx: number, dy: number) => {
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    let targetX = dx;
+    let targetY = dy;
 
     if (distance > MAX_RADIUS) {
-      targetX = (x / distance) * MAX_RADIUS;
-      targetY = (y / distance) * MAX_RADIUS;
+      targetX = (dx / distance) * MAX_RADIUS;
+      targetY = (dy / distance) * MAX_RADIUS;
     }
 
     setKnobPos({ x: targetX, y: targetY });
@@ -121,17 +221,24 @@ export default function ManualScreen() {
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
       onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderGrant: () => {
+        setScrollEnabled(false);
+      },
       onPanResponderMove: (evt, gestureState) => {
         handleJoystickMove(gestureState.dx, gestureState.dy);
       },
       onPanResponderRelease: () => {
         setKnobPos({ x: 0, y: 0 });
         stop();
+        setScrollEnabled(true);
       },
       onPanResponderTerminate: () => {
         setKnobPos({ x: 0, y: 0 });
         stop();
+        setScrollEnabled(true);
       },
     })
   ).current;
@@ -139,8 +246,11 @@ export default function ManualScreen() {
   return (
     <View className="flex-1 bg-slate-50">
       <Container>
-        <ScrollView className="flex-1 px-4 pb-6 pt-1" contentContainerStyle={{ gap: 16 }}>
-          {/* Top Bar: Manual Mode Toggle */}
+        <ScrollView
+          scrollEnabled={scrollEnabled}
+          className="flex-1 px-4 pb-6 pt-1"
+          contentContainerStyle={{ gap: 16 }}>
+          {/* Bar de Controle Manual */}
           <View className="flex-row items-center justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
             <View className="flex-row items-center gap-2.5">
               <View
@@ -156,7 +266,7 @@ export default function ManualScreen() {
                   {manualEnabled ? 'Controle Manual Ativo' : 'Manual Desativado'}
                 </Text>
                 <Text className="text-[10px] text-slate-400">
-                  {manualEnabled ? 'Motores liberados' : 'Ative para controlar'}
+                  {manualEnabled ? 'Comandos liberados no Arduino' : 'Ative para controlar'}
                 </Text>
               </View>
             </View>
@@ -177,18 +287,17 @@ export default function ManualScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Ajuste Personalizado de Velocidade (PWM) */}
+          {/* Ajuste de Velocidade (PWM) */}
           <View className="gap-3 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
             <View className="flex-row items-center justify-between">
               <Text className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                 Ajuste de Velocidade
               </Text>
               <Text className="font-mono text-xs font-semibold text-slate-700">
-                PWM: {maxAllowedPWM} ({Math.round(speedPercent * 100)}%)
+                PWM Máx: {maxAllowedPWM} ({Math.round(speedPercent * 100)}%)
               </Text>
             </View>
 
-            {/* Controle Personalizado (+ / - e Percentuais) */}
             <View className="flex-row items-center gap-2">
               <TouchableOpacity
                 onPress={() => changeSpeedBy(-0.05)}
@@ -226,7 +335,44 @@ export default function ManualScreen() {
             </View>
           </View>
 
-          {/* Telemetria de Motores & Direção Atual */}
+          {/* Perfis de Aceleração dos Motores */}
+          <View className="gap-2.5 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+            <View className="flex-row items-center justify-between">
+              <View className="flex-row items-center gap-1.5">
+                <Ionicons name="options-outline" size={16} color="#475569" />
+                <Text className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Perfil de Aceleração
+                </Text>
+              </View>
+              <Text className="text-[10px] font-medium text-slate-500">
+                {ACCEL_PROFILES.find((m) => m.key === accelMode)?.desc}
+              </Text>
+            </View>
+
+            <View className="flex-row flex-wrap gap-2">
+              {ACCEL_PROFILES.map((profile) => {
+                const isSelected = accelMode === profile.key;
+                return (
+                  <TouchableOpacity
+                    key={profile.key}
+                    onPress={() => setAccelMode(profile.key)}
+                    className="min-w-[30%] flex-1 items-center rounded-lg border px-1 py-2"
+                    style={{
+                      backgroundColor: isSelected ? '#0f172a' : '#f8fafc',
+                      borderColor: isSelected ? '#0f172a' : '#e2e8f0',
+                    }}>
+                    <Text
+                      className="text-center text-[11px] font-bold"
+                      style={{ color: isSelected ? '#ffffff' : '#475569' }}>
+                      {profile.label.split(' ')[0]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Telemetria dos Motores em Tempo Real */}
           <View className="gap-3 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
             <View className="flex-row items-center justify-between border-b border-slate-100 pb-2">
               <View className="flex-row items-center gap-1.5">
@@ -299,7 +445,7 @@ export default function ManualScreen() {
           </View>
 
           {/* Área de Controle (Direcionais ou Joystick Analógico) */}
-          <View className="min-h-[220px] items-center justify-center rounded-xl border border-slate-200 bg-white py-4 shadow-sm">
+          <View className="min-h-[230px] items-center justify-center rounded-xl border border-slate-200 bg-white py-4 shadow-sm">
             {controlMode === 'buttons' ? (
               <View className="relative h-48 w-48 items-center justify-center">
                 {/* Frente */}
@@ -379,14 +525,14 @@ export default function ManualScreen() {
                     borderRadius: KNOB_SIZE / 2,
                     backgroundColor: '#0f172a',
                     borderWidth: 2,
-                    borderColor: '#334155',
+                    borderColor: '#38bdf8',
                     position: 'absolute',
                     transform: [{ translateX: knobPos.x }, { translateY: knobPos.y }],
-                    shadowColor: '#000',
+                    shadowColor: '#38bdf8',
                     shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.2,
-                    shadowRadius: 3,
-                    elevation: 4,
+                    shadowOpacity: 0.3,
+                    shadowRadius: 4,
+                    elevation: 5,
                   }}
                 />
               </View>

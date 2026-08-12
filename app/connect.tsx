@@ -97,11 +97,11 @@ export default function ConnectScreen() {
   const handleDisconnect = async () => {
     try {
       await disconnect();
-      setConnectedName(null);
-      Alert.alert('Desconectado', 'Conexão Bluetooth encerrada.');
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Falha ao desconectar.';
-      setError(message);
+      console.log('Desconexão silenciosa:', err);
+    } finally {
+      setConnectedName(null);
+      setError(null);
     }
   };
 

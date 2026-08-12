@@ -16,6 +16,58 @@ let dataSubscription: { remove?: () => void } | null = null;
 const listeners = new Set<DataListener>();
 let buffer = '';
 
+// --- Otimização Estável de Comunicação Bluetooth (60ms / ~16Hz) ---
+let pendingDriveCommand: string | null = null;
+let lastSentDriveCommand = '';
+let isWriting = false;
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+const MIN_SEND_INTERVAL_MS = 60; // 60ms (~16Hz): taxa ultra-estável que não satura o RFCOMM do Android
+
+async function processWriteQueue() {
+  if (!device) return;
+
+  if (pendingDriveCommand !== null) {
+    const cmd = pendingDriveCommand;
+    pendingDriveCommand = null;
+
+    // Se o comando for exatamente idêntico ao último enviado, não retransmite (exceto parada)
+    if (cmd === lastSentDriveCommand && cmd !== 'M,0,0') {
+      isWriting = false;
+      writeTimer = null;
+      return;
+    }
+
+    lastSentDriveCommand = cmd;
+    isWriting = true;
+
+    // Watchdog de segurança: destrava a fila se a chamada nativa travar
+    if (watchdogTimer) clearTimeout(watchdogTimer);
+    watchdogTimer = setTimeout(() => {
+      isWriting = false;
+      writeTimer = null;
+    }, 500);
+
+    try {
+      await device.write(cmd.endsWith('\n') ? cmd : `${cmd}\n`);
+    } catch (e) {
+      console.error('Erro no envio Bluetooth:', e);
+    } finally {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+      isWriting = false;
+      writeTimer = null;
+
+      // Se houver novo comando pendente, agenda a próxima escrita respeitando o intervalo mínimo
+      if (pendingDriveCommand !== null) {
+        writeTimer = setTimeout(processWriteQueue, MIN_SEND_INTERVAL_MS);
+      }
+    }
+  } else {
+    isWriting = false;
+    writeTimer = null;
+  }
+}
+
 function attachDataListener() {
   if (!device || dataSubscription) return;
 
@@ -44,7 +96,7 @@ function attachDataListener() {
 
 export async function connect(address: string) {
   if (!RNBluetoothClassic || typeof RNBluetoothClassic.connectToDevice !== 'function') {
-    throw new Error('Bluetooth indisponivel. Rode no Android com o modulo nativo.');
+    throw new Error('Bluetooth indisponível. Rode no Android com o módulo nativo.');
   }
   //@ts-ignore
   const connected = (await RNBluetoothClassic.connectToDevice(address)) as BluetoothDevice;
@@ -56,19 +108,48 @@ export async function connect(address: string) {
 }
 
 export async function disconnect() {
-  if (!device) return;
+  if (writeTimer) clearTimeout(writeTimer);
+  if (watchdogTimer) clearTimeout(watchdogTimer);
+  pendingDriveCommand = null;
+  lastSentDriveCommand = '';
+  isWriting = false;
 
-  await device.disconnect?.();
-  device = null;
-  dataSubscription?.remove?.();
-  dataSubscription = null;
-  buffer = '';
+  try {
+    if (device) {
+      await device.disconnect?.();
+    }
+  } catch (e) {
+    console.log('Socket Bluetooth já desconectado ou encerrado:', e);
+  } finally {
+    device = null;
+    dataSubscription?.remove?.();
+    dataSubscription = null;
+    buffer = '';
+  }
 }
 
-export async function send(command: string) {
+export async function send(command: string, priority = false) {
   if (!device) return;
-  console.log('Enviando comando:', command);
-  await device.write(command.endsWith('\n') ? command : `${command}\n`);
+
+  const isDriveCmd = command.startsWith('M,');
+
+  // Comandos de controle/parada com prioridade imediata
+  if (priority || !isDriveCmd || command === 'M,0,0') {
+    pendingDriveCommand = null;
+    lastSentDriveCommand = command;
+    try {
+      await device.write(command.endsWith('\n') ? command : `${command}\n`);
+    } catch (e) {
+      console.error('Erro no envio prioritário Bluetooth:', e);
+    }
+    return;
+  }
+
+  // Atualiza com o comando mais recente e aciona a fila se ela não estiver processando
+  pendingDriveCommand = command;
+  if (!isWriting && !writeTimer) {
+    processWriteQueue();
+  }
 }
 
 export function sendWithTimeout(
@@ -97,7 +178,7 @@ export function sendWithTimeout(
       }
     });
 
-    send(command).catch((err) => {
+    send(command, true).catch((err) => {
       cleanup();
       reject(err);
     });
