@@ -64,6 +64,13 @@ export default function Layout() {
           }}
         />
         <Drawer.Screen
+          name="editar-estrategia"
+          options={{
+            title: 'Calibrar & Criar Estratégia',
+            drawerLabel: 'Calibrar & Criar Estratégia',
+          }}
+        />
+        <Drawer.Screen
           name="details"
           options={{
             drawerItemStyle: { display: 'none' },

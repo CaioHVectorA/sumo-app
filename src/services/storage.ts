@@ -8,9 +8,34 @@ export type SavedDevice = {
   lastConnectedAt?: number;
 };
 
+const memoryStorage: Record<string, string> = {};
+
+async function safeGetItem(key: string): Promise<string | null> {
+  try {
+    if (AsyncStorage && typeof AsyncStorage.getItem === 'function') {
+      const val = await AsyncStorage.getItem(key);
+      if (val !== null) return val;
+    }
+  } catch (e) {
+    console.warn(`[Storage Safe Fallback] Erro ao ler ${key}:`, e);
+  }
+  return memoryStorage[key] ?? null;
+}
+
+async function safeSetItem(key: string, value: string): Promise<void> {
+  memoryStorage[key] = value;
+  try {
+    if (AsyncStorage && typeof AsyncStorage.setItem === 'function') {
+      await AsyncStorage.setItem(key, value);
+    }
+  } catch (e) {
+    console.warn(`[Storage Safe Fallback] Erro ao salvar ${key}:`, e);
+  }
+}
+
 export async function getSavedDevices(): Promise<SavedDevice[]> {
   try {
-    const jsonValue = await AsyncStorage.getItem(SAVED_DEVICES_KEY);
+    const jsonValue = await safeGetItem(SAVED_DEVICES_KEY);
     return jsonValue != null ? (JSON.parse(jsonValue) as SavedDevice[]) : [];
   } catch (e) {
     console.error('Erro ao ler conexoes memorizadas:', e);
@@ -31,7 +56,7 @@ export async function saveDevice(device: {
       lastConnectedAt: Date.now(),
     };
     const newList = [updated, ...filtered];
-    await AsyncStorage.setItem(SAVED_DEVICES_KEY, JSON.stringify(newList));
+    await safeSetItem(SAVED_DEVICES_KEY, JSON.stringify(newList));
     return newList;
   } catch (e) {
     console.error('Erro ao memorizar dispositivo:', e);
@@ -43,7 +68,7 @@ export async function removeSavedDevice(address: string): Promise<SavedDevice[]>
   try {
     const current = await getSavedDevices();
     const newList = current.filter((d) => d.address !== address);
-    await AsyncStorage.setItem(SAVED_DEVICES_KEY, JSON.stringify(newList));
+    await safeSetItem(SAVED_DEVICES_KEY, JSON.stringify(newList));
     return newList;
   } catch (e) {
     console.error('Erro ao remover dispositivo memorizado:', e);
