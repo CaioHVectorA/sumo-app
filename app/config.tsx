@@ -1,287 +1,377 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
   ScrollView,
+  StyleSheet,
   Switch,
   Text,
   TextInput,
-  TouchableOpacity,
   Vibration,
   View,
 } from 'react-native';
+import Ionicons from '@/components/Icon';
 import { useRouter } from 'expo-router';
-
-import { Container } from '@/components/Container';
 import { useRobot } from '@/src/hooks/useRobot';
-import { onData, sendWithTimeout } from '@/src/services/bluetooth';
+import { useConnection } from '@/src/hooks/useConnection';
+import { sendWithTimeout } from '@/src/services/bluetooth';
+import { Action, Card, Notice, PageTitle, ui } from '@/components/ui';
+import { palette as c } from '@/src/theme';
 
-type FieldConfig = {
+type Field = {
   key: string;
   label: string;
-  value: string;
-  setValue: (value: string) => void;
+  hint: string;
+  unit: string;
+  max: number;
+  step: number;
+  initial: string;
 };
+const fields: Field[] = [
+  {
+    key: 'PWM_BASE',
+    label: 'Potência de busca',
+    hint: 'Velocidade ao procurar o oponente.',
+    unit: 'PWM',
+    max: 1599,
+    step: 50,
+    initial: '1300',
+  },
+  {
+    key: 'PWM_MAX_DELTA',
+    label: 'Aceleração',
+    hint: 'Quanto a potência aumenta a cada ciclo.',
+    unit: 'PWM',
+    max: 255,
+    step: 1,
+    initial: '8',
+  },
+  {
+    key: 'BREAK_TIME_1',
+    label: 'Freio · sensor central',
+    hint: 'Pausa ao detectar com o sensor central.',
+    unit: 'ms',
+    max: 65535,
+    step: 50,
+    initial: '250',
+  },
+  {
+    key: 'BREAK_TIME_3',
+    label: 'Freio · três sensores',
+    hint: 'Pausa quando o oponente está centralizado.',
+    unit: 'ms',
+    max: 65535,
+    step: 50,
+    initial: '250',
+  },
+  {
+    key: 'TIME_BEFORE_MOVING',
+    label: 'Espera inicial',
+    hint: 'Tempo antes de começar a busca.',
+    unit: 'ms',
+    max: 65535,
+    step: 100,
+    initial: '1500',
+  },
+  {
+    key: 'VARIANCIA',
+    label: 'Variação da estratégia A',
+    hint: '0: curto · 1: médio · 2: fundo da arena.',
+    unit: '',
+    max: 2,
+    step: 1,
+    initial: '2',
+  },
+];
 
 export default function ConfigScreen() {
   const router = useRouter();
-  const [pwmBase, setPwmBase] = useState('1300');
-  const [pwmMaxDelta, setPwmMaxDelta] = useState('8');
-  const [breakTime1, setBreakTime1] = useState('250');
-  const [breakTime3, setBreakTime3] = useState('250');
-  const [timeBeforeMoving, setTimeBeforeMoving] = useState('1500');
-  const [variancia, setVariancia] = useState('2');
-  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
-  const [isError, setIsError] = useState(false);
-  const { status, telemetry, isRealTime, setIsRealTime, getSensors } = useRobot();
-
-  const sensors = telemetry?.sensores ?? 0;
-
-  const sensorBits = [
-    { active: Boolean(sensors & (1 << 4)), label: 'LE' }, // Lateral Esquerda (PC4)
-    { active: Boolean(sensors & (1 << 3)), label: 'CE' }, // Centro Esquerda (PC3)
-    { active: Boolean(sensors & (1 << 2)), label: 'C' }, // Central (PC2)
-    { active: Boolean(sensors & (1 << 1)), label: 'CD' }, // Centro Direita (PC1)
-    { active: false, label: 'LD (Inativo)', disabled: true }, // Lateral Direita - Desativado/Instável
-  ];
-
-  const fields = useMemo<FieldConfig[]>(
-    () => [
-      { key: 'PWM_BASE', label: 'PWM base', value: pwmBase, setValue: setPwmBase },
-      {
-        key: 'PWM_MAX_DELTA',
-        label: 'PWM delta max',
-        value: pwmMaxDelta,
-        setValue: setPwmMaxDelta,
-      },
-      {
-        key: 'BREAK_TIME_1',
-        label: 'Tempo de freio 1',
-        value: breakTime1,
-        setValue: setBreakTime1,
-      },
-      {
-        key: 'BREAK_TIME_3',
-        label: 'Tempo de freio 3',
-        value: breakTime3,
-        setValue: setBreakTime3,
-      },
-      {
-        key: 'TIME_BEFORE_MOVING',
-        label: 'Tempo antes de mover',
-        value: timeBeforeMoving,
-        setValue: setTimeBeforeMoving,
-      },
-      { key: 'VARIANCIA', label: 'Variancia', value: variancia, setValue: setVariancia },
-    ],
-    [pwmBase, pwmMaxDelta, breakTime1, breakTime3, timeBeforeMoving, variancia]
+  const connection = useConnection();
+  const { telemetry, isRealTime, setIsRealTime, getSensors, error: sensorError } = useRobot();
+  const [values, setValues] = useState<Record<string, string>>(
+    Object.fromEntries(fields.map((field) => [field.key, field.initial]))
   );
+  const [busy, setBusy] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ message: string; error: boolean } | null>(null);
+  const [advanced, setAdvanced] = useState(false);
+  const sensorLabels = ['LE', 'CE', 'C', 'CD', 'LD'];
+  const valid = (field: Field) =>
+    /^\d+$/.test(values[field.key]) && Number(values[field.key]) <= field.max;
+  const change = (field: Field, delta: number) =>
+    setValues((current) => ({
+      ...current,
+      [field.key]: String(
+        Math.max(0, Math.min(field.max, (Number(current[field.key]) || 0) + delta))
+      ),
+    }));
 
-  const triggerHapticSent = () => {
-    try {
-      Vibration.vibrate(40);
-    } catch {}
-  };
-
-  const triggerHapticReceived = () => {
-    try {
-      Vibration.vibrate([0, 50, 50, 50]);
-    } catch {}
-  };
-
-  const triggerHapticError = () => {
-    try {
-      Vibration.vibrate([0, 100, 50, 100]);
-    } catch {}
-  };
-
-  useEffect(() => {
-    const unsubscribe = onData((line) => {
-      if (line.includes('=') || line.includes('_OK') || line.startsWith('STATUS')) {
-        triggerHapticReceived();
-        setIsError(false);
-        setFeedbackMessage(`Confirmado: ${line}`);
-        const timeout = setTimeout(() => setFeedbackMessage(null), 4000);
-        return () => clearTimeout(timeout);
-      }
-    });
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, []);
-
-  const sendParam = async (key: string, value: string) => {
-    triggerHapticSent();
-    setIsError(false);
-    setFeedbackMessage(`Enviando ${key}... (Aguardando confirmação em até 3s)`);
-
-    try {
-      await sendWithTimeout(
-        `${key} = ${value}`,
-        (line) => line.includes(key) || line.includes('='),
-        3000
-      );
-      setIsError(false);
-      setFeedbackMessage(`✓ ${key} atualizado com sucesso!`);
-    } catch (err: unknown) {
-      triggerHapticError();
-      setIsError(true);
-      const msg = err instanceof Error ? err.message : 'Sem resposta do robô';
-      setFeedbackMessage(`✗ ${msg}`);
+  const submit = async (selected: Field[]) => {
+    const invalid = selected.find((field) => !valid(field));
+    if (invalid) {
+      setFeedback({
+        message: `${invalid.label}: informe um número inteiro de 0 a ${invalid.max}.`,
+        error: true,
+      });
+      return;
     }
-  };
-
-  const sendAll = async () => {
-    triggerHapticSent();
-    setIsError(false);
-    setFeedbackMessage('Enviando todas as configurações...');
-
-    for (const field of fields) {
-      try {
-        await sendWithTimeout(
-          `${field.key} = ${field.value}`,
-          (line) => line.includes(field.key) || line.includes('='),
-          3000
+    setBusy(selected.length > 1 ? 'all' : selected[0].key);
+    setFeedback(null);
+    Vibration.vibrate(12);
+    try {
+      for (const field of selected) {
+        const value = Number(values[field.key]);
+        await sendWithTimeout(`${field.key} = ${value}`, (line) =>
+          field.key === 'VARIANCIA'
+            ? line === `VARIANCIA_${value}_OK`
+            : new RegExp(`^${field.key}\\s*=\\s*${value}$`).test(line)
         );
-      } catch (err: unknown) {
-        triggerHapticError();
-        setIsError(true);
-        const msg = err instanceof Error ? err.message : 'Sem resposta do robô';
-        setFeedbackMessage(`✗ Falha ao enviar ${field.key}: ${msg}`);
-        return;
       }
+      setFeedback({
+        message: connection?.demo
+          ? 'Configuração simulada na demonstração.'
+          : selected.length > 1
+            ? 'Configurações confirmadas pelo robô.'
+            : `${selected[0].label}: atualização confirmada.`,
+        error: false,
+      });
+    } catch (error) {
+      setFeedback({
+        message: error instanceof Error ? error.message : 'Não foi possível enviar.',
+        error: true,
+      });
+    } finally {
+      setBusy(null);
     }
-
-    setIsError(false);
-    setFeedbackMessage('✓ Todas as configurações enviadas e confirmadas!');
   };
 
-  return (
-    <View className="flex-1 bg-white">
-      <Container>
-        <ScrollView
-          contentContainerStyle={{
-            gap: 16,
-            paddingBottom: 24,
-            paddingHorizontal: 16,
-            paddingTop: 0,
-          }}>
-          <View className="mb-2 items-center justify-center rounded-lg border border-sky-100 bg-sky-50 p-4">
-            <View className="flex-row flex-wrap justify-center gap-3">
-              <TouchableOpacity
-                onPress={sendAll}
-                className="rounded-md bg-slate-900 px-6 py-3 shadow-sm active:opacity-70">
-                <Text className="text-center font-bold text-white">Enviar tudo</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => router.push('/estrategias' as any)}
-                className="rounded-md bg-sky-600 px-6 py-3 shadow-sm active:opacity-70">
-                <Text className="text-center font-bold text-white">Página de Estratégias</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Feedback Tátil/Visual com Suporte a Timeout */}
-          {feedbackMessage ? (
-            <View
-              className={`rounded-lg border p-3 ${
-                isError ? 'border-rose-300 bg-rose-50' : 'border-emerald-200 bg-emerald-50'
-              }`}>
-              <Text
-                className={`text-center text-xs font-semibold ${
-                  isError ? 'text-rose-700' : 'text-emerald-700'
-                }`}>
-                {feedbackMessage}
-              </Text>
-            </View>
-          ) : null}
-
-          <View className="rounded-lg border border-slate-100 bg-white p-4 shadow-sm">
-            <View className="flex-row items-center justify-between">
-              <Text className="text-sm font-semibold text-gray-700">Sensores</Text>
-              <View className="flex-row items-center gap-2">
-                <Text className="text-xs text-gray-500">Tempo Real</Text>
-                <Switch
-                  value={isRealTime}
-                  onValueChange={setIsRealTime}
-                  trackColor={{ false: '#767577', true: '#10b981' }}
-                  thumbColor={isRealTime ? '#f4f3f4' : '#f4f3f4'}
-                />
-              </View>
-            </View>
-
-            <View className="mt-4 flex-row justify-center gap-2">
-              {sensorBits.map((sensor, index) => (
-                <View
-                  key={index}
-                  className={`h-12 w-12 items-center justify-center rounded-md border ${
-                    sensor.disabled
-                      ? 'border-dashed border-red-300 bg-red-50/50 opacity-50'
-                      : sensor.active
-                        ? 'border-green-600 bg-green-500'
-                        : 'border-zinc-700 bg-zinc-800'
-                  }`}>
-                  <Text
-                    className={`text-[10px] font-bold ${sensor.disabled ? 'text-red-400' : 'text-white'}`}>
-                    {sensor.label}
-                  </Text>
-                </View>
-              ))}
-            </View>
-
-            {!isRealTime && (
-              <TouchableOpacity
-                onPress={getSensors}
-                className="mt-4 rounded-md bg-slate-900 py-2.5 active:opacity-70">
-                <Text className="text-center text-sm font-semibold text-white">
-                  Ler Sensores Agora
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <View className="gap-3">
-            {fields.map((field) => (
-              <View
-                key={field.key}
-                className="rounded-lg border border-slate-100 bg-white p-4 shadow-sm">
-                <Text className="text-sm font-semibold uppercase tracking-wider text-gray-500">
-                  {field.label}
-                </Text>
-                <View className="mt-3 flex-row items-center gap-3">
-                  <TextInput
-                    value={field.value}
-                    onChangeText={field.setValue}
-                    keyboardType="numeric"
-                    className="flex-1 rounded-md border border-gray-200 bg-slate-50 px-3 py-2 text-base"
-                  />
-                  <TouchableOpacity
-                    className="rounded-md bg-slate-900 px-4 py-2"
-                    onPress={() => sendParam(field.key, field.value)}>
-                    <Text className="text-sm font-semibold text-white">Enviar</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
-          </View>
-
-          {status ? (
-            <View className="rounded-lg border border-slate-100 bg-white p-4 shadow-sm">
-              <Text className="text-sm font-semibold text-gray-700">Status atual</Text>
-              <View className="mt-3 gap-2">
-                {Object.entries(status).map(([key, value]) => (
-                  <View
-                    key={key}
-                    className="flex-row items-center justify-between border-b border-slate-50 py-1">
-                    <Text className="text-xs font-medium uppercase text-gray-400">{key}</Text>
-                    <Text className="text-xs font-bold text-slate-800">{value}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          ) : null}
-        </ScrollView>
-      </Container>
+  const renderField = (field: Field) => (
+    <View key={field.key} style={s.field}>
+      <View style={{ gap: 4 }}>
+        <Text style={s.label}>{field.label}</Text>
+        <Text style={ui.body}>{field.hint}</Text>
+      </View>
+      <View style={[ui.row, { gap: 8 }]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Diminuir ${field.label}`}
+          disabled={Boolean(busy)}
+          onPress={() => change(field, -field.step)}
+          style={s.stepper}>
+          <Ionicons name="remove" size={22} color={c.ink} />
+        </Pressable>
+        <View style={s.inputWrap}>
+          <TextInput
+            accessibilityLabel={field.label}
+            value={values[field.key]}
+            onChangeText={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
+            keyboardType="number-pad"
+            selectTextOnFocus
+            editable={!busy}
+            style={s.input}
+          />
+          <Text style={{ color: c.muted, fontSize: 12 }}>{field.unit}</Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Aumentar ${field.label}`}
+          disabled={Boolean(busy)}
+          onPress={() => change(field, field.step)}
+          style={s.stepper}>
+          <Ionicons name="add" size={22} color={c.ink} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Enviar ${field.label}`}
+          disabled={!connection || Boolean(busy)}
+          onPress={() => void submit([field])}
+          style={[
+            s.stepper,
+            { backgroundColor: c.primaryLight, opacity: !connection || busy ? 0.4 : 1 },
+          ]}>
+          <Ionicons name="arrow-up" size={22} color={c.primary} />
+        </Pressable>
+      </View>
     </View>
   );
+
+  return (
+    <KeyboardAvoidingView style={ui.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={ui.content}>
+        <PageTitle
+          eyebrow="Encontre o ponto certo"
+          title="Ajustes do robô."
+          description="Calibre o movimento e acompanhe os sensores."
+        />
+        {!connection && (
+          <Notice>
+            Conecte o robô na aba Início para enviar os ajustes. Você pode preparar os valores
+            antes.
+          </Notice>
+        )}
+        {connection?.demo && (
+          <Notice>Demonstração: as leituras e confirmações são simuladas.</Notice>
+        )}
+        {feedback && <Notice error={feedback.error}>{feedback.message}</Notice>}
+        {sensorError && <Notice error>{sensorError}</Notice>}
+        <Card>
+          <View style={[ui.row, { justifyContent: 'space-between' }]}>
+            <Text style={ui.section}>Sensores</Text>
+            <View style={[ui.row, { gap: 6 }]}>
+              <Text style={ui.body}>Ao vivo</Text>
+              <Switch
+                accessibilityLabel="Atualizar sensores a cada segundo"
+                disabled={!connection}
+                value={isRealTime && Boolean(connection)}
+                onValueChange={setIsRealTime}
+                trackColor={{ true: c.primary, false: c.line }}
+              />
+            </View>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {sensorLabels.map((label, index) => {
+              const inactive = index === 4;
+              const active =
+                !inactive && telemetry !== null && Boolean(telemetry.sensores & (1 << (4 - index)));
+              return (
+                <View
+                  key={label}
+                  accessibilityLabel={`${label}: ${inactive ? 'desativado' : !telemetry ? 'sem leitura' : active ? 'detectando' : 'livre'}`}
+                  style={[
+                    s.sensor,
+                    active && { backgroundColor: c.primary, borderColor: c.primary },
+                    inactive && { borderStyle: 'dashed', backgroundColor: c.background },
+                  ]}>
+                  <Text
+                    style={{ fontSize: 17, fontWeight: '700', color: active ? '#FFFFFF' : c.ink }}>
+                    {label}
+                  </Text>
+                  <View style={[s.sensorDot, { backgroundColor: active ? c.lime : c.line }]} />
+                  <Text style={{ fontSize: 9, color: active ? '#FFFFFF' : c.muted }}>
+                    {inactive ? 'OFF' : !telemetry ? '—' : active ? 'ALVO' : 'LIVRE'}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+          <Text style={ui.body}>
+            LE → LD: esquerda para direita. O lateral direito está desativado.
+          </Text>
+          {!isRealTime && (
+            <Action
+              title="Ler sensores agora"
+              icon="scan-outline"
+              tone="secondary"
+              disabled={!connection}
+              onPress={getSensors}
+            />
+          )}
+        </Card>
+        <Card>
+          <Text style={ui.section}>Movimento</Text>
+          <Text style={ui.body}>Ajuste com + e − ou toque no valor para digitar.</Text>
+          {fields.slice(0, 2).map(renderField)}
+        </Card>
+        <Card>
+          <Pressable
+            accessibilityRole="button"
+            aria-expanded={advanced}
+            accessibilityState={{ expanded: advanced }}
+            onPress={() => setAdvanced(!advanced)}
+            style={[ui.row, { minHeight: 48, justifyContent: 'space-between' }]}>
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={ui.section}>Tempos e estratégia</Text>
+              <Text style={ui.body}>Frenagem, espera e variação de ataque.</Text>
+            </View>
+            <Ionicons name={advanced ? 'chevron-up' : 'chevron-down'} size={22} color={c.primary} />
+          </Pressable>
+          {advanced && fields.slice(2).map(renderField)}
+        </Card>
+        <View style={{ gap: 10 }}>
+          <Text style={ui.section}>Ferramentas</Text>
+          <Action
+            title="Calibrar movimentos e criar estratégia"
+            icon="construct-outline"
+            tone="secondary"
+            onPress={() =>
+              router.navigate({
+                pathname: '/editar-estrategia',
+                params: { id: '', tab: 'calibracao' },
+              })
+            }
+          />
+          <Action
+            title="Abrir console de comunicação"
+            icon="terminal-outline"
+            tone="secondary"
+            onPress={() => router.navigate('/console')}
+          />
+        </View>
+      </ScrollView>
+      <View style={s.footer}>
+        <Action
+          title={busy ? 'Aguardando confirmação…' : 'Enviar todos os ajustes'}
+          icon="cloud-upload-outline"
+          busy={Boolean(busy)}
+          disabled={!connection}
+          onPress={() => void submit(fields)}
+        />
+        <Text style={s.caption}>Valores preparados no app; envie para aplicar no robô.</Text>
+      </View>
+    </KeyboardAvoidingView>
+  );
 }
+
+const s = StyleSheet.create({
+  field: { gap: 12, paddingTop: 16, borderTopWidth: 1, borderColor: c.line },
+  label: { color: c.ink, fontSize: 15, fontWeight: '700' },
+  stepper: {
+    width: 46,
+    height: 48,
+    backgroundColor: c.background,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inputWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: c.line,
+    borderRadius: 13,
+    paddingHorizontal: 10,
+    gap: 4,
+  },
+  input: {
+    flex: 1,
+    minWidth: 30,
+    color: c.ink,
+    fontSize: 19,
+    fontWeight: '600',
+    paddingVertical: 10,
+    textAlign: 'center',
+  },
+  sensor: {
+    flex: 1,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: c.line,
+    alignItems: 'center',
+    paddingVertical: 14,
+    gap: 8,
+  },
+  sensorDot: { width: 7, height: 7, borderRadius: 4 },
+  footer: {
+    backgroundColor: c.surface,
+    padding: 16,
+    borderTopWidth: 1,
+    borderColor: c.line,
+    gap: 8,
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
+  },
+  caption: { fontSize: 11, textAlign: 'center', color: c.muted },
+});

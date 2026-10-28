@@ -1,441 +1,675 @@
-import React, { useRef, useState } from 'react';
-import { PanResponder, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  Animated,
+  AppState,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  Vibration,
+  View,
+} from 'react-native';
+import Ionicons from '@/components/Icon';
+import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ManualController,
+  joystickMotors,
+  MAX_PWM,
+  type ManualState,
+} from '@/src/control/manualController';
+import { send, sendWithTimeout } from '@/src/services/bluetooth';
+import { useConnection } from '@/src/hooks/useConnection';
+import { Action, Notice, PageTitle, ui, type IconName } from '@/components/ui';
+import { palette as c } from '@/src/theme';
 
-import { Container } from '@/components/Container';
-import { useRobot } from '@/src/hooks/useRobot';
-import { send } from '@/src/services/bluetooth';
-
-// Configurações físicas do Joystick Analógico
-const JOYSTICK_SIZE = 180;
-const KNOB_SIZE = 64;
-const MAX_RADIUS = JOYSTICK_SIZE / 2;
-
-const SPEED_PRESETS = [
-  { label: '25%', percent: 0.25 },
-  { label: '50%', percent: 0.5 },
-  { label: '75%', percent: 0.75 },
-  { label: '100%', percent: 1.0 },
+const initialState: ManualState = { enabled: false, busy: false, error: null, left: 0, right: 0 };
+const directions: {
+  label: string;
+  icon: IconName;
+  left: number;
+  right: number;
+  position: 'up' | 'left' | 'right' | 'down';
+}[] = [
+  { label: 'Avançar', icon: 'arrow-up', left: MAX_PWM, right: MAX_PWM, position: 'up' },
+  {
+    label: 'Girar à esquerda',
+    icon: 'arrow-back',
+    left: -MAX_PWM,
+    right: MAX_PWM,
+    position: 'left',
+  },
+  {
+    label: 'Girar à direita',
+    icon: 'arrow-forward',
+    left: MAX_PWM,
+    right: -MAX_PWM,
+    position: 'right',
+  },
+  { label: 'Recuar', icon: 'arrow-down', left: -MAX_PWM, right: -MAX_PWM, position: 'down' },
 ];
 
 export default function ManualScreen() {
-  const [manualEnabled, setManualEnabled] = useState(false);
-  const [controlMode, setControlMode] = useState<'buttons' | 'joystick'>('buttons');
-  const [speedPercent, setSpeedPercent] = useState<number>(0.6); // Padrão 60%
-  const [activeDirection, setActiveDirection] = useState<string>('PARADO');
-  const { telemetry } = useRobot();
-
-  // Armazena a velocidade enviada aos motores para evitar redundâncias
-  const currentSpeed = useRef({ left: 0, right: 0 });
-
-  const maxAllowedPWM = Math.round(1599 * speedPercent);
-
-  const enableManual = async () => {
-    await send('MANUAL_ON');
-    setManualEnabled(true);
-  };
-
-  const disableManual = async () => {
-    await send('MANUAL_OFF');
-    setManualEnabled(false);
-  };
-
-  const toggleManual = () => {
-    if (manualEnabled) {
-      disableManual();
-    } else {
-      enableManual();
-    }
-  };
-
-  // Ajuste personalizado de velocidade
-  const changeSpeedBy = (delta: number) => {
-    setSpeedPercent((prev) => {
-      const next = Math.round((prev + delta) * 100) / 100;
-      return Math.max(0.1, Math.min(1.0, next));
+  const connection = useConnection();
+  const router = useRouter();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const wide = width >= 700;
+  const compact = wide && height < 600;
+  const dense = height < 720;
+  const [state, setState] = useState(initialState);
+  const [mode, setMode] = useState<'buttons' | 'joystick'>('joystick');
+  const [speed, setSpeed] = useState(0.5);
+  const [haptics, setHaptics] = useState(true);
+  const [presentation, setPresentation] = useState(false);
+  const [details, setDetails] = useState(false);
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: !presentation,
+      tabBarStyle: presentation
+        ? { display: 'none' }
+        : {
+            backgroundColor: c.surface,
+            borderTopColor: c.line,
+            height: 68 + insets.bottom,
+            paddingTop: 8,
+            paddingBottom: Math.max(insets.bottom, 8),
+          },
     });
-  };
+  }, [presentation, navigation, insets.bottom]);
+  const [touching, setTouching] = useState(false);
+  const [direction, setDirection] = useState('Pronto para pilotar');
+  const mounted = useRef(true);
+  const controller = useRef<ManualController | null>(null);
+  if (!controller.current)
+    controller.current = new ManualController(
+      (command) =>
+        command === 'MANUAL_ON'
+          ? sendWithTimeout(command, (line) => line === 'MANUAL_ON_OK')
+          : send(command),
+      (next) => {
+        if (mounted.current) setState(next);
+      }
+    );
+  const driver = controller.current;
+  const knob = useRef(new Animated.ValueXY()).current;
+  const hapticsRef = useRef(haptics);
+  hapticsRef.current = haptics;
+  const pulse = useCallback((duration = 12) => {
+    if (hapticsRef.current) Vibration.vibrate(duration);
+  }, []);
+  const controlSize =
+    dense && !presentation
+      ? 180
+      : presentation && compact
+        ? Math.max(140, Math.min(220, height - 190 - insets.top - insets.bottom))
+        : Math.min(wide ? 310 : width - 72, Math.max(200, height - (presentation ? 500 : 620)));
 
-  const drive = async (rawLeft: number, rawRight: number, directionLabel?: string) => {
-    if (!manualEnabled) return;
+  const radius = (controlSize - 76) / 2;
+  const liveGesture = useRef({ enabled: state.enabled, radius, direction });
+  liveGesture.current = { enabled: state.enabled, radius, direction };
 
-    // Aplica o limite percentual de velocidade ajustado
-    const left = Math.round(rawLeft * speedPercent);
-    const right = Math.round(rawRight * speedPercent);
+  const release = useCallback(() => {
+    void driver.stop();
+    setTouching(false);
+    setDirection('Parado');
+    Animated.spring(knob, {
+      toValue: { x: 0, y: 0 },
+      useNativeDriver: true,
+      speed: 28,
+      bounciness: 4,
+    }).start();
+  }, [driver, knob]);
 
-    if (currentSpeed.current.left === left && currentSpeed.current.right === right) return;
-    currentSpeed.current = { left, right };
-
-    if (directionLabel) {
-      setActiveDirection(directionLabel);
-    } else if (left === 0 && right === 0) {
-      setActiveDirection('PARADO');
-    }
-
-    await send(`M,${left},${right}`);
-  };
-
-  const stop = () => drive(0, 0, 'PARADO');
-
-  // --- Lógica do Joystick Analógico ---
-  const [knobPos, setKnobPos] = useState({ x: 0, y: 0 });
-
-  const handleJoystickMove = (x: number, y: number) => {
-    const distance = Math.sqrt(x * x + y * y);
-    let targetX = x;
-    let targetY = y;
-
-    if (distance > MAX_RADIUS) {
-      targetX = (x / distance) * MAX_RADIUS;
-      targetY = (y / distance) * MAX_RADIUS;
-    }
-
-    setKnobPos({ x: targetX, y: targetY });
-
-    const nx = targetX / MAX_RADIUS;
-    const ny = -targetY / MAX_RADIUS;
-
-    const baseScale = 1599;
-    const V = ny * baseScale;
-    const W = nx * baseScale;
-
-    let left = Math.round(V + W);
-    let right = Math.round(V - W);
-
-    left = Math.max(-1599, Math.min(1599, left));
-    right = Math.max(-1599, Math.min(1599, right));
-
-    let label = 'DIRECIONAL';
-    if (ny > 0.3) label = 'FRENTE';
-    else if (ny < -0.3) label = 'RÉ';
-    else if (nx > 0.3) label = 'GIRO DIREITA';
-    else if (nx < -0.3) label = 'GIRO ESQUERDA';
-
-    if (Math.abs(left) < 150 && Math.abs(right) < 150) {
-      drive(0, 0, 'PARADO');
-    } else {
-      drive(left, right, label);
-    }
-  };
-
-  const panResponder = useRef(
+  const responder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: (evt, gestureState) => {
-        handleJoystickMove(gestureState.dx, gestureState.dy);
+      onStartShouldSetPanResponder: () => liveGesture.current.enabled,
+      onMoveShouldSetPanResponder: () => liveGesture.current.enabled,
+      onPanResponderGrant: () => {
+        setTouching(true);
+        pulse();
       },
-      onPanResponderRelease: () => {
-        setKnobPos({ x: 0, y: 0 });
-        stop();
+      onPanResponderMove: (_, gesture) => {
+        if (!liveGesture.current.enabled) return;
+        const r = liveGesture.current.radius;
+        const distance = Math.hypot(gesture.dx, gesture.dy);
+        const scale = Math.min(1, r / (distance || 1));
+        knob.setValue({ x: gesture.dx * scale, y: gesture.dy * scale });
+        const motors = joystickMotors(gesture.dx, gesture.dy, r);
+        driver.move(motors);
+        const label =
+          !motors.left && !motors.right
+            ? 'Parado'
+            : Math.abs(gesture.dy) >= Math.abs(gesture.dx)
+              ? gesture.dy < 0
+                ? 'Avançando'
+                : 'Recuando'
+              : gesture.dx > 0
+                ? 'Virando à direita'
+                : 'Virando à esquerda';
+        if (label !== liveGesture.current.direction) {
+          liveGesture.current.direction = label;
+          setDirection(label);
+          pulse(8);
+        }
       },
-      onPanResponderTerminate: () => {
-        setKnobPos({ x: 0, y: 0 });
-        stop();
-      },
+      onPanResponderRelease: release,
+      onPanResponderTerminate: release,
+      onPanResponderTerminationRequest: () => false,
     })
   ).current;
 
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        void driver.disable();
+        release();
+      };
+    }, [driver, release])
+  );
+
+  useEffect(() => {
+    mounted.current = true;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') {
+        void driver.disable();
+        release();
+      }
+    });
+    return () => {
+      mounted.current = false;
+      sub.remove();
+      void driver.disable();
+    };
+  }, [driver, release]);
+
+  useEffect(() => {
+    void driver.disable();
+    release();
+  }, [connection, driver, release]);
+
+  const emergencyStop = () => {
+    void driver.disable();
+    release();
+    pulse(40);
+  };
+  const changeSpeed = (value: number) => {
+    release();
+    driver.setSpeed(value);
+    setSpeed(value);
+    pulse();
+  };
+  const moving = state.enabled && Boolean(state.left || state.right);
+
   return (
-    <View className="flex-1 bg-slate-50">
-      <Container>
-        <ScrollView className="flex-1 px-4 pb-6 pt-1" contentContainerStyle={{ gap: 16 }}>
-          {/* Top Bar: Manual Mode Toggle */}
-          <View className="flex-row items-center justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <View className="flex-row items-center gap-2.5">
-              <View
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: 5,
-                  backgroundColor: manualEnabled ? '#10b981' : '#94a3b8',
+    <View style={ui.page}>
+      <ScrollView
+        scrollEnabled={!touching}
+        contentContainerStyle={[
+          ui.content,
+          { gap: 14, paddingTop: presentation ? Math.max(insets.top, 12) : 12, paddingBottom: 16 },
+        ]}>
+        {!dense && (
+          <PageTitle
+            title={presentation ? 'Apresentação' : 'Controle manual'}
+            action={
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={presentation ? 'Sair da apresentação' : 'Modo apresentação'}
+                aria-selected={presentation}
+                accessibilityState={{ selected: presentation }}
+                onPress={() => {
+                  release();
+                  setPresentation(!presentation);
                 }}
-              />
-              <View>
-                <Text className="text-xs font-semibold text-slate-800">
-                  {manualEnabled ? 'Controle Manual Ativo' : 'Manual Desativado'}
+                style={ui.iconButton}>
+                <Ionicons
+                  name={presentation ? 'contract-outline' : 'expand-outline'}
+                  size={22}
+                  color={c.ink}
+                />
+              </Pressable>
+            }
+          />
+        )}
+        {!connection && (
+          <Notice>
+            Conecte seu robô na aba Início ou abra a demonstração para experimentar os controles.
+          </Notice>
+        )}
+        {state.error && (
+          <Notice error>
+            {state.error} O controle foi desativado. Confira o robô antes de reativar.
+          </Notice>
+        )}
+        <View style={[s.workspace, wide && { flexDirection: 'row', alignItems: 'center' }]}>
+          <View style={[s.settings, wide && { width: 280 }]}>
+            <View style={[ui.row, { justifyContent: 'space-between' }]}>
+              <Text style={ui.section}>Potência</Text>
+              {dense && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={presentation ? 'Sair da apresentação' : 'Modo apresentação'}
+                  onPress={() => {
+                    release();
+                    setPresentation(!presentation);
+                  }}
+                  style={ui.iconButton}>
+                  <Ionicons
+                    name={presentation ? 'contract-outline' : 'expand-outline'}
+                    size={22}
+                    color={c.ink}
+                  />
+                </Pressable>
+              )}
+              <View style={ui.row}>
+                <Text style={s.speedValue}>
+                  {Math.round(speed * 100)}
+                  <Text style={{ fontSize: 16 }}>%</Text>
                 </Text>
-                <Text className="text-[10px] text-slate-400">
-                  {manualEnabled ? 'Motores liberados' : 'Ative para controlar'}
-                </Text>
+                {!presentation && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Opções de potência e resposta tátil"
+                    aria-expanded={details}
+                    accessibilityState={{ expanded: details }}
+                    onPress={() => setDetails(!details)}
+                    style={{
+                      minWidth: 44,
+                      minHeight: 44,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                    <Ionicons name="options-outline" size={22} color={c.primary} />
+                  </Pressable>
+                )}
               </View>
             </View>
-
-            <TouchableOpacity
-              onPress={toggleManual}
-              className="rounded-lg px-3 py-1.5"
-              style={{
-                backgroundColor: manualEnabled ? '#fff1f2' : '#f0fdf4',
-                borderWidth: 1,
-                borderColor: manualEnabled ? '#fecdd3' : '#bbf7d0',
-              }}>
-              <Text
-                className="text-xs font-semibold"
-                style={{ color: manualEnabled ? '#e11d48' : '#16a34a' }}>
-                {manualEnabled ? 'Desativar' : 'Ativar'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Ajuste Personalizado de Velocidade (PWM) */}
-          <View className="gap-3 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
-            <View className="flex-row items-center justify-between">
-              <Text className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                Ajuste de Velocidade
-              </Text>
-              <Text className="font-mono text-xs font-semibold text-slate-700">
-                PWM: {maxAllowedPWM} ({Math.round(speedPercent * 100)}%)
-              </Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {[0.25, 0.5, 0.75, 1].map((value) => (
+                <Pressable
+                  key={value}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Potência ${value * 100} por cento`}
+                  aria-selected={speed === value}
+                  accessibilityState={{ selected: speed === value }}
+                  onPress={() => changeSpeed(value)}
+                  style={[
+                    s.speedPreset,
+                    speed === value && { backgroundColor: c.primary, borderColor: c.primary },
+                  ]}>
+                  <Text
+                    style={{
+                      color: speed === value ? '#FFFFFF' : c.ink,
+                      fontWeight: '700',
+                      fontSize: 14,
+                    }}>
+                    {value * 100}%
+                  </Text>
+                </Pressable>
+              ))}
             </View>
-
-            {/* Controle Personalizado (+ / - e Percentuais) */}
-            <View className="flex-row items-center gap-2">
-              <TouchableOpacity
-                onPress={() => changeSpeedBy(-0.05)}
-                className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2">
-                <Text className="text-xs font-bold text-slate-700">- 5%</Text>
-              </TouchableOpacity>
-
-              <View className="flex-1 flex-row justify-center gap-1.5">
-                {SPEED_PRESETS.map((preset) => {
-                  const isSelected = Math.abs(speedPercent - preset.percent) < 0.01;
-                  return (
-                    <TouchableOpacity
-                      key={preset.percent}
-                      onPress={() => setSpeedPercent(preset.percent)}
-                      className="flex-1 items-center justify-center rounded-lg border py-2"
-                      style={{
-                        backgroundColor: isSelected ? '#0f172a' : '#f8fafc',
-                        borderColor: isSelected ? '#0f172a' : '#e2e8f0',
-                      }}>
-                      <Text
-                        className="text-xs font-semibold"
-                        style={{ color: isSelected ? '#ffffff' : '#475569' }}>
-                        {preset.label}
+            {!presentation && details && (
+              <>
+                <View style={ui.row}>
+                  <Action
+                    title="− 5%"
+                    tone="secondary"
+                    disabled={speed <= 0.1}
+                    onPress={() =>
+                      changeSpeed(Math.max(0.1, Math.round((speed - 0.05) * 100) / 100))
+                    }
+                    style={{ flex: 1, minHeight: 44 }}
+                  />
+                  <Action
+                    title="+ 5%"
+                    tone="secondary"
+                    disabled={speed >= 1}
+                    onPress={() => changeSpeed(Math.min(1, Math.round((speed + 0.05) * 100) / 100))}
+                    style={{ flex: 1, minHeight: 44 }}
+                  />
+                </View>
+                <View style={s.motorReadout}>
+                  {(['left', 'right'] as const).map((side) => (
+                    <View key={side} style={{ flex: 1, gap: 8 }}>
+                      <Text style={s.motorLabel}>{side === 'left' ? 'ESQUERDO' : 'DIREITO'}</Text>
+                      <Text style={s.motorValue}>
+                        {state[side] > 0 ? '+' : ''}
+                        {state[side]}
                       </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              <TouchableOpacity
-                onPress={() => changeSpeedBy(0.05)}
-                className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2">
-                <Text className="text-xs font-bold text-slate-700">+ 5%</Text>
-              </TouchableOpacity>
-            </View>
+                      <View style={s.motorTrack}>
+                        <View
+                          style={{
+                            width: `${(Math.abs(state[side]) / MAX_PWM) * 100}%`,
+                            height: 4,
+                            backgroundColor: c.primary,
+                            borderRadius: 2,
+                          }}
+                        />
+                      </View>
+                    </View>
+                  ))}
+                </View>
+                <Text style={{ color: c.muted, fontSize: 11 }}>
+                  Potência solicitada aos motores.
+                </Text>
+                <Pressable
+                  accessibilityRole="switch"
+                  aria-checked={haptics}
+                  accessibilityState={{ checked: haptics }}
+                  onPress={() => {
+                    setHaptics(!haptics);
+                    if (!haptics) Vibration.vibrate(12);
+                  }}
+                  style={[ui.row, { minHeight: 44, justifyContent: 'space-between' }]}>
+                  <View style={ui.row}>
+                    <Ionicons name="finger-print-outline" size={20} color={c.primary} />
+                    <Text style={ui.body}>Resposta tátil</Text>
+                  </View>
+                  <Text style={{ color: c.primary, fontWeight: '700' }}>
+                    {haptics ? 'Ativada' : 'Desativada'}
+                  </Text>
+                </Pressable>
+              </>
+            )}
           </View>
-
-          {/* Telemetria de Motores & Direção Atual */}
-          <View className="gap-3 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
-            <View className="flex-row items-center justify-between border-b border-slate-100 pb-2">
-              <View className="flex-row items-center gap-1.5">
-                <Ionicons name="speedometer-outline" size={16} color="#64748b" />
-                <Text className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Vetor dos Motores
+          <View style={[s.controlPanel, wide && { flex: 1 }, dense && { padding: 12, gap: 10 }]}>
+            <View style={[ui.row, { justifyContent: 'space-between' }]}>
+              <View style={ui.row}>
+                <View style={[s.dot, { backgroundColor: state.enabled ? c.lime : '#77918B' }]} />
+                <Text style={s.controlStatus}>
+                  {connection?.demo ? 'DEMO · ' : ''}
+                  {state.busy
+                    ? 'Ativando…'
+                    : state.enabled
+                      ? 'Controle ativo'
+                      : 'Controle desativado'}
                 </Text>
               </View>
-              <View className="rounded border border-slate-200 bg-slate-100 px-2 py-0.5">
-                <Text className="text-[10px] font-bold text-slate-700">{activeDirection}</Text>
+              <View style={s.modeSwitch}>
+                {(['joystick', 'buttons'] as const).map((item) => (
+                  <Pressable
+                    key={item}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      item === 'joystick' ? 'Usar joystick' : 'Usar botões direcionais'
+                    }
+                    aria-selected={mode === item}
+                    accessibilityState={{ selected: mode === item }}
+                    onPress={() => {
+                      release();
+                      setMode(item);
+                      pulse();
+                    }}
+                    style={[s.modeButton, mode === item && { backgroundColor: c.lime }]}>
+                    <Ionicons
+                      name={item === 'joystick' ? 'radio-button-on-outline' : 'keypad-outline'}
+                      size={21}
+                      color={mode === item ? c.night : '#C5D9D2'}
+                    />
+                  </Pressable>
+                ))}
               </View>
             </View>
-
-            <View className="flex-row items-center justify-around">
-              <View className="items-center">
-                <Text className="text-[10px] font-medium text-slate-400">Motor Esquerdo (L)</Text>
-                <Text className="font-mono text-sm font-bold text-slate-800">
-                  {currentSpeed.current.left > 0
-                    ? `+${currentSpeed.current.left}`
-                    : currentSpeed.current.left}
-                </Text>
-              </View>
-
-              <View className="h-6 w-px bg-slate-200" />
-
-              <View className="items-center">
-                <Text className="text-[10px] font-medium text-slate-400">Motor Direito (R)</Text>
-                <Text className="font-mono text-sm font-bold text-slate-800">
-                  {currentSpeed.current.right > 0
-                    ? `+${currentSpeed.current.right}`
-                    : currentSpeed.current.right}
-                </Text>
-              </View>
+            <View style={{ alignItems: 'center', opacity: state.enabled ? 1 : 0.4 }}>
+              {mode === 'joystick' ? (
+                <View
+                  {...responder.panHandlers}
+                  accessibilityLabel="Joystick. Arraste para mover; solte para parar. Use os direcionais para controle por botões."
+                  style={[
+                    s.joystick,
+                    { width: controlSize, height: controlSize, borderRadius: controlSize / 2 },
+                  ]}>
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      s.ring,
+                      {
+                        width: controlSize * 0.7,
+                        height: controlSize * 0.7,
+                        borderRadius: controlSize,
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[s.crosshair, { width: controlSize - 32, height: 1 }]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[s.crosshair, { width: 1, height: controlSize - 32 }]}
+                  />
+                  <Ionicons
+                    name="chevron-up"
+                    size={20}
+                    color="#77918B"
+                    style={{ position: 'absolute', top: 12 }}
+                  />
+                  <Ionicons
+                    name="chevron-down"
+                    size={20}
+                    color="#77918B"
+                    style={{ position: 'absolute', bottom: 12 }}
+                  />
+                  <Ionicons
+                    name="chevron-back"
+                    size={20}
+                    color="#77918B"
+                    style={{ position: 'absolute', left: 12 }}
+                  />
+                  <Ionicons
+                    name="chevron-forward"
+                    size={20}
+                    color="#77918B"
+                    style={{ position: 'absolute', right: 12 }}
+                  />
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      s.knob,
+                      {
+                        backgroundColor: touching ? '#E3FF9E' : c.lime,
+                        transform: knob.getTranslateTransform(),
+                      },
+                    ]}>
+                    <View style={s.knobGrip} />
+                    <View style={s.knobGrip} />
+                    <View style={s.knobGrip} />
+                  </Animated.View>
+                </View>
+              ) : (
+                <View style={{ width: controlSize, height: controlSize }}>
+                  {directions.map((item) => (
+                    <Pressable
+                      key={item.position}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${item.label}. Segure para mover e solte para parar.`}
+                      disabled={!state.enabled}
+                      onPressIn={() => {
+                        setTouching(true);
+                        setDirection(item.label);
+                        pulse();
+                        driver.move(item);
+                      }}
+                      onPressOut={release}
+                      style={({ pressed }) => [
+                        s.directionButton,
+                        { width: controlSize * 0.31, height: controlSize * 0.31 },
+                        s[item.position],
+                        {
+                          backgroundColor: pressed ? c.lime : '#2B4E47',
+                          transform: [{ scale: pressed ? 0.94 : 1 }],
+                        },
+                      ]}>
+                      {({ pressed }) => (
+                        <Ionicons
+                          name={item.icon}
+                          size={32}
+                          color={pressed ? c.night : '#FFFFFF'}
+                        />
+                      )}
+                    </Pressable>
+                  ))}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Parar motores"
+                    onPressIn={() => {
+                      release();
+                      pulse(24);
+                    }}
+                    style={[
+                      s.centerStop,
+                      { width: controlSize * 0.25, height: controlSize * 0.25 },
+                    ]}>
+                    <Ionicons name="stop" size={24} color={c.lime} />
+                  </Pressable>
+                </View>
+              )}
             </View>
-          </View>
-
-          {/* Alternador de Modo de Controle */}
-          <View className="flex-row rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-            <TouchableOpacity
-              onPress={() => {
-                stop();
-                setControlMode('buttons');
-              }}
-              className="flex-1 items-center justify-center rounded-lg py-2"
-              style={{
-                backgroundColor: controlMode === 'buttons' ? '#0f172a' : 'transparent',
-              }}>
-              <Text
-                className="text-xs font-semibold"
-                style={{ color: controlMode === 'buttons' ? '#ffffff' : '#64748b' }}>
-                Direcionais
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => {
-                stop();
-                setControlMode('joystick');
-              }}
-              className="flex-1 items-center justify-center rounded-lg py-2"
-              style={{
-                backgroundColor: controlMode === 'joystick' ? '#0f172a' : 'transparent',
-              }}>
-              <Text
-                className="text-xs font-semibold"
-                style={{ color: controlMode === 'joystick' ? '#ffffff' : '#64748b' }}>
-                Joystick Analógico
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Área de Controle (Direcionais ou Joystick Analógico) */}
-          <View className="min-h-[220px] items-center justify-center rounded-xl border border-slate-200 bg-white py-4 shadow-sm">
-            {controlMode === 'buttons' ? (
-              <View className="relative h-48 w-48 items-center justify-center">
-                {/* Frente */}
-                <TouchableOpacity
-                  onPressIn={() => drive(1599, 1599, 'FRENTE')}
-                  onPressOut={stop}
-                  className="absolute top-0 h-14 w-16 items-center justify-center rounded-xl bg-slate-900 shadow active:bg-slate-800">
-                  <Ionicons name="chevron-up" size={24} color="#ffffff" />
-                </TouchableOpacity>
-
-                {/* Esquerda */}
-                <TouchableOpacity
-                  onPressIn={() => drive(-1200, 1200, 'GIRO ESQUERDA')}
-                  onPressOut={stop}
-                  className="absolute left-0 h-14 w-16 items-center justify-center rounded-xl bg-slate-900 shadow active:bg-slate-800">
-                  <Ionicons name="chevron-back" size={24} color="#ffffff" />
-                </TouchableOpacity>
-
-                {/* Direita */}
-                <TouchableOpacity
-                  onPressIn={() => drive(1200, -1200, 'GIRO DIREITA')}
-                  onPressOut={stop}
-                  className="absolute right-0 h-14 w-16 items-center justify-center rounded-xl bg-slate-900 shadow active:bg-slate-800">
-                  <Ionicons name="chevron-forward" size={24} color="#ffffff" />
-                </TouchableOpacity>
-
-                {/* Ré */}
-                <TouchableOpacity
-                  onPressIn={() => drive(-1000, -1000, 'RÉ')}
-                  onPressOut={stop}
-                  className="absolute bottom-0 h-14 w-16 items-center justify-center rounded-xl bg-slate-900 shadow active:bg-slate-800">
-                  <Ionicons name="chevron-down" size={24} color="#ffffff" />
-                </TouchableOpacity>
-
-                {/* Botão Central de Parada */}
-                <TouchableOpacity
-                  onPress={stop}
-                  className="h-12 w-12 items-center justify-center rounded-full border border-slate-300 bg-slate-100">
-                  <View className="h-3.5 w-3.5 rounded-sm bg-slate-600" />
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View
-                {...panResponder.panHandlers}
-                style={{
-                  width: JOYSTICK_SIZE,
-                  height: JOYSTICK_SIZE,
-                  borderRadius: JOYSTICK_SIZE / 2,
-                  backgroundColor: '#f8fafc',
-                  borderWidth: 2,
-                  borderColor: '#cbd5e1',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  position: 'relative',
-                }}>
-                <View
-                  style={{
-                    position: 'absolute',
-                    width: JOYSTICK_SIZE - 20,
-                    height: 1,
-                    backgroundColor: '#e2e8f0',
-                  }}
-                />
-                <View
-                  style={{
-                    position: 'absolute',
-                    width: 1,
-                    height: JOYSTICK_SIZE - 20,
-                    backgroundColor: '#e2e8f0',
-                  }}
-                />
-
-                <View
-                  style={{
-                    width: KNOB_SIZE,
-                    height: KNOB_SIZE,
-                    borderRadius: KNOB_SIZE / 2,
-                    backgroundColor: '#0f172a',
-                    borderWidth: 2,
-                    borderColor: '#334155',
-                    position: 'absolute',
-                    transform: [{ translateX: knobPos.x }, { translateY: knobPos.y }],
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.2,
-                    shadowRadius: 3,
-                    elevation: 4,
-                  }}
-                />
+            {!dense && (
+              <View style={{ alignItems: 'center', gap: 5 }}>
+                <Text accessibilityLiveRegion="polite" style={s.direction}>
+                  {state.enabled ? (moving ? direction : 'Parado') : 'Ative para começar'}
+                </Text>
+                <Text style={s.instruction}>Segure para mover · Solte para parar</Text>
               </View>
             )}
           </View>
-
-          {/* Botão de Parada de Emergência Prominente */}
-          <TouchableOpacity
-            onPress={stop}
-            className="items-center justify-center rounded-xl bg-rose-600 py-3.5 shadow-sm active:bg-rose-700">
-            <View className="flex-row items-center gap-2">
-              <Ionicons name="stop-circle-outline" size={20} color="#ffffff" />
-              <Text className="text-sm font-bold uppercase tracking-wider text-white">
-                PARADA DE EMERGÊNCIA (STOP)
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Telemetria do Robô */}
-          {telemetry ? (
-            <View className="gap-2 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
-              <Text className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                Leitura de Telemetria
-              </Text>
-
-              <View className="flex-row items-center justify-between border-b border-slate-100 py-1">
-                <Text className="text-xs text-slate-500">Sensores de Linha / Obstáculo</Text>
-                <Text className="font-mono text-xs font-semibold text-slate-800">
-                  {telemetry.sensores}
-                </Text>
-              </View>
-
-              <View className="flex-row items-center justify-between border-b border-slate-100 py-1">
-                <Text className="text-xs text-slate-500">Sinal PWM Atual</Text>
-                <Text className="font-mono text-xs font-semibold text-slate-800">
-                  {telemetry.pwm}
-                </Text>
-              </View>
-
-              <View className="flex-row items-center justify-between py-1">
-                <Text className="text-xs text-slate-500">Variação Delta</Text>
-                <Text className="font-mono text-xs font-semibold text-slate-800">
-                  {telemetry.delta}
-                </Text>
-              </View>
-            </View>
-          ) : null}
-        </ScrollView>
-      </Container>
+        </View>
+      </ScrollView>
+      <View style={[s.dock, presentation && { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        {state.enabled || state.busy ? (
+          <Action
+            title="PARAR E DESATIVAR"
+            icon="stop-circle"
+            tone="danger"
+            onPress={emergencyStop}
+            style={{ minHeight: presentation && compact ? 48 : 62 }}
+          />
+        ) : (
+          <Action
+            title={connection ? 'Ativar controle manual' : 'Conectar um robô'}
+            icon={connection ? 'power' : 'bluetooth'}
+            busy={state.busy}
+            onPress={() => {
+              pulse(20);
+              if (connection) void driver.enable();
+              else router.navigate('/');
+            }}
+            style={{ minHeight: presentation && compact ? 48 : 60 }}
+          />
+        )}
+        {!(presentation && compact) && (
+          <Text style={s.dockCaption}>
+            {state.enabled
+              ? 'A parada desativa o controle. Reative para voltar a mover.'
+              : 'Os motores só respondem com o controle ativado.'}
+          </Text>
+        )}
+      </View>
     </View>
   );
 }
+
+const s = StyleSheet.create({
+  workspace: { gap: 14 },
+  controlPanel: { backgroundColor: c.night, borderRadius: 28, padding: 16, gap: 14 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  controlStatus: { fontSize: 12, fontWeight: '700', color: '#DCE9E2' },
+  modeSwitch: { flexDirection: 'row', backgroundColor: '#21453E', padding: 3, borderRadius: 14 },
+  modeButton: {
+    width: 44,
+    height: 40,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  joystick: {
+    backgroundColor: '#173B34',
+    borderColor: '#3F6055',
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ring: { position: 'absolute', borderColor: '#35564A', borderWidth: 1 },
+  crosshair: { position: 'absolute', backgroundColor: '#35564A' },
+  knob: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    borderWidth: 5,
+    borderColor: '#ACC666',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+  },
+  knobGrip: { width: 22, height: 2, backgroundColor: '#829945', borderRadius: 1 },
+  direction: { fontSize: 19, fontWeight: '700', color: '#FFFFFF' },
+  instruction: { fontSize: 12, color: '#B1C9BB' },
+  directionButton: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    borderBottomWidth: 5,
+    borderColor: '#416555',
+  },
+  up: { top: 0, left: '34.5%' },
+  left: { left: 0, top: '34.5%' },
+  right: { right: 0, top: '34.5%' },
+  down: { bottom: 0, left: '34.5%' },
+  centerStop: {
+    position: 'absolute',
+    left: '37.5%',
+    top: '37.5%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    backgroundColor: '#23473B',
+  },
+  settings: { gap: 12 },
+  speedValue: { fontSize: 28, fontWeight: '800', color: c.primary, letterSpacing: -1 },
+  speedPreset: {
+    flex: 1,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: c.surface,
+    borderWidth: 1,
+    borderColor: c.line,
+  },
+  motorReadout: {
+    flexDirection: 'row',
+    gap: 24,
+    backgroundColor: c.surface,
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 4,
+  },
+  motorLabel: { fontSize: 10, letterSpacing: 1.5, color: c.muted, fontWeight: '700' },
+  motorValue: { fontSize: 24, fontWeight: '600', color: c.ink, fontVariant: ['tabular-nums'] },
+  motorTrack: { height: 4, borderRadius: 2, backgroundColor: c.line },
+  dock: {
+    backgroundColor: c.surface,
+    borderTopWidth: 1,
+    borderColor: c.line,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 10,
+    gap: 8,
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
+  },
+  dockCaption: { fontSize: 11, color: c.muted, textAlign: 'center' },
+  demoLabel: { color: c.primary, fontSize: 10, letterSpacing: 1.5, fontWeight: '800' },
+});

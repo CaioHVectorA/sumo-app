@@ -1,21 +1,24 @@
-import React, { useCallback, useRef, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
+  Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   Vibration,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
-
-import { Container } from '@/components/Container';
-import { useRobot } from '@/src/hooks/useRobot';
-import { onData, send } from '@/src/services/bluetooth';
+import Ionicons from '@/components/Icon';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { strategyCommand } from '@/src/control/strategyCommand';
+import { useConnection } from '@/src/hooks/useConnection';
+import { send, sendWithTimeout } from '@/src/services/bluetooth';
 import {
   CustomStrategy,
   deleteCustomStrategy,
@@ -24,6 +27,8 @@ import {
   importStrategyFromJSON,
   StrategyStep,
 } from '@/src/services/strategyStorage';
+import { Action, Card, Notice, PageTitle, ui } from '@/components/ui';
+import { palette as c } from '@/src/theme';
 
 type StrategyOption = {
   id: string;
@@ -103,46 +108,169 @@ const BUILTIN_STRATEGIES: StrategyOption[] = [
 
 const BUILTIN_MOVEMENT_DETAILS: Record<string, Record<number, StrategyStep[]>> = {
   '0': {
-    0: [{ id: '0_1', stepNumber: 1, motorEsq: 0, motorDir: 0, timeMs: 0, action: 'Busca direta por sensores' }],
+    0: [
+      {
+        id: '0_1',
+        stepNumber: 1,
+        motorEsq: 0,
+        motorDir: 0,
+        timeMs: 0,
+        action: 'Busca direta por sensores',
+      },
+    ],
   },
   A: {
     0: [
-      { id: 'A0_1', stepNumber: 1, motorEsq: 1599, motorDir: -1599, timeMs: 100, action: 'Giro no eixo à DIREITA' },
-      { id: 'A0_2', stepNumber: 2, motorEsq: 300, motorDir: 1599, timeMs: 550, action: 'Curva aberta à esquerda' },
+      {
+        id: 'A0_1',
+        stepNumber: 1,
+        motorEsq: 1599,
+        motorDir: -1599,
+        timeMs: 100,
+        action: 'Giro no eixo à DIREITA',
+      },
+      {
+        id: 'A0_2',
+        stepNumber: 2,
+        motorEsq: 300,
+        motorDir: 1599,
+        timeMs: 550,
+        action: 'Curva aberta à esquerda',
+      },
     ],
     1: [
-      { id: 'A1_1', stepNumber: 1, motorEsq: 1599, motorDir: -1599, timeMs: 70, action: 'Giro no eixo à DIREITA' },
-      { id: 'A1_2', stepNumber: 2, motorEsq: 700, motorDir: 1599, timeMs: 400, action: 'Curva média à esquerda' },
+      {
+        id: 'A1_1',
+        stepNumber: 1,
+        motorEsq: 1599,
+        motorDir: -1599,
+        timeMs: 70,
+        action: 'Giro no eixo à DIREITA',
+      },
+      {
+        id: 'A1_2',
+        stepNumber: 2,
+        motorEsq: 700,
+        motorDir: 1599,
+        timeMs: 400,
+        action: 'Curva média à esquerda',
+      },
     ],
     2: [
-      { id: 'A2_1', stepNumber: 1, motorEsq: 1599, motorDir: -1599, timeMs: 70, action: 'Giro no eixo à DIREITA' },
-      { id: 'A2_2', stepNumber: 2, motorEsq: 850, motorDir: 1599, timeMs: 580, action: 'Avanço longo (fundo da arena)' },
+      {
+        id: 'A2_1',
+        stepNumber: 1,
+        motorEsq: 1599,
+        motorDir: -1599,
+        timeMs: 70,
+        action: 'Giro no eixo à DIREITA',
+      },
+      {
+        id: 'A2_2',
+        stepNumber: 2,
+        motorEsq: 850,
+        motorDir: 1599,
+        timeMs: 580,
+        action: 'Avanço longo (fundo da arena)',
+      },
     ],
   },
   B: {
     0: [
-      { id: 'B_1', stepNumber: 1, motorEsq: 1100, motorDir: -1100, timeMs: 48, action: 'Giro curto à DIREITA' },
-      { id: 'B_2', stepNumber: 2, motorEsq: 1500, motorDir: 1500, timeMs: 120, action: 'Avanço reto rápido' },
-      { id: 'B_3', stepNumber: 3, motorEsq: 200, motorDir: 1400, timeMs: 182, action: 'Curva diagonal fechada' },
-      { id: 'B_4', stepNumber: 4, motorEsq: 1500, motorDir: 1500, timeMs: 500, action: 'Sprint final' },
+      {
+        id: 'B_1',
+        stepNumber: 1,
+        motorEsq: 1100,
+        motorDir: -1100,
+        timeMs: 48,
+        action: 'Giro curto à DIREITA',
+      },
+      {
+        id: 'B_2',
+        stepNumber: 2,
+        motorEsq: 1500,
+        motorDir: 1500,
+        timeMs: 120,
+        action: 'Avanço reto rápido',
+      },
+      {
+        id: 'B_3',
+        stepNumber: 3,
+        motorEsq: 200,
+        motorDir: 1400,
+        timeMs: 182,
+        action: 'Curva diagonal fechada',
+      },
+      {
+        id: 'B_4',
+        stepNumber: 4,
+        motorEsq: 1500,
+        motorDir: 1500,
+        timeMs: 500,
+        action: 'Sprint final',
+      },
     ],
   },
   C: {
     0: [
-      { id: 'C_1', stepNumber: 1, motorEsq: 0, motorDir: 0, timeMs: 400, action: 'Imóvel (aguarda oponente)' },
-      { id: 'C_2', stepNumber: 2, motorEsq: 1599, motorDir: 1599, timeMs: 160, action: 'Contra-ataque 100%' },
+      {
+        id: 'C_1',
+        stepNumber: 1,
+        motorEsq: 0,
+        motorDir: 0,
+        timeMs: 400,
+        action: 'Imóvel (aguarda oponente)',
+      },
+      {
+        id: 'C_2',
+        stepNumber: 2,
+        motorEsq: 1599,
+        motorDir: 1599,
+        timeMs: 160,
+        action: 'Contra-ataque 100%',
+      },
     ],
   },
   D: {
     0: [
-      { id: 'D_1', stepNumber: 1, motorEsq: 1599, motorDir: 1599, timeMs: 180, action: 'Impulso inicial' },
+      {
+        id: 'D_1',
+        stepNumber: 1,
+        motorEsq: 1599,
+        motorDir: 1599,
+        timeMs: 180,
+        action: 'Impulso inicial',
+      },
       { id: 'D_2', stepNumber: 2, motorEsq: 0, motorDir: 0, timeMs: 400, action: 'Pausa completa' },
-      { id: 'D_3', stepNumber: 3, motorEsq: 1599, motorDir: 1599, timeMs: 160, action: 'Segundo avanço 100%' },
-      { id: 'D_4', stepNumber: 4, motorEsq: 0, motorDir: 0, timeMs: 0, action: 'Início do loop PID' },
+      {
+        id: 'D_3',
+        stepNumber: 3,
+        motorEsq: 1599,
+        motorDir: 1599,
+        timeMs: 160,
+        action: 'Segundo avanço 100%',
+      },
+      {
+        id: 'D_4',
+        stepNumber: 4,
+        motorEsq: 0,
+        motorDir: 0,
+        timeMs: 0,
+        action: 'Início do loop PID',
+      },
     ],
   },
   E: {
-    0: [{ id: 'E_1', stepNumber: 1, motorEsq: 0, motorDir: 0, timeMs: 0, action: 'Reservado no firmware' }],
+    0: [
+      {
+        id: 'E_1',
+        stepNumber: 1,
+        motorEsq: 0,
+        motorDir: 0,
+        timeMs: 0,
+        action: 'Reservado no firmware',
+      },
+    ],
   },
 };
 
@@ -152,913 +280,584 @@ const VARIANCIA_LABELS = [
   { value: 2, label: 'Fundo', desc: 'Giro 70ms + Avanço Longo' },
 ];
 
-const CONFIRM_TIMEOUT_MS = 3000;
+const FRIENDLY_NAMES: Record<string, string> = {
+  '0': 'Busca direta',
+  A: 'Giro e fuga',
+  B: 'Flanqueamento',
+  C: 'Contra-ataque',
+  D: 'Finta',
+};
 
 export default function EstrategiasScreen() {
   const router = useRouter();
-  const [selectedStrat, setSelectedStrat] = useState<string>('A');
-  const [selectedVariancia, setSelectedVariancia] = useState<number>(1);
-  const [sendState, setSendState] = useState<'idle' | 'sending' | 'waiting' | 'success' | 'error'>(
-    'idle'
-  );
-  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { status } = useRobot();
-
-  const [customStrats, setCustomStrats] = useState<CustomStrategy[]>([]);
-  const [importModalVisible, setImportModalVisible] = useState(false);
-  const [exportModalVisible, setExportModalVisible] = useState(false);
-  const [jsonText, setJsonText] = useState('');
-  const [exportJsonText, setExportJsonText] = useState('');
-
-  const loadCustomStrategiesList = async () => {
-    const list = await getCustomStrategies();
-    setCustomStrats(list || []);
-  };
-
+  const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ selected?: string }>();
+  const connection = useConnection();
+  const [custom, setCustom] = useState<CustomStrategy[]>([]);
+  const [selected, setSelected] = useState('A');
+  const [variation, setVariation] = useState(1);
+  const [category, setCategory] = useState<'builtin' | 'custom'>('builtin');
+  const [expanded, setExpanded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<{ message: string; error: boolean } | null>(null);
+  const [modal, setModal] = useState<'import' | 'export' | null>(null);
+  const [json, setJson] = useState('');
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const reload = useCallback(async () => {
+    setCustom(await getCustomStrategies());
+  }, []);
   useFocusEffect(
     useCallback(() => {
-      loadCustomStrategiesList();
-    }, [])
+      void reload();
+    }, [reload])
   );
-
-  const allStrategies: StrategyOption[] = [
-    ...BUILTIN_STRATEGIES,
-    ...customStrats.map((c) => ({
-      id: c.id,
-      title: c.title,
-      subtitle: c.subtitle,
-      badge: c.badge || 'Customizada',
-      iconName: (c.iconName as any) || 'construct-outline',
-      description: c.description,
+  useEffect(() => {
+    if (params.selected) {
+      setSelected(params.selected);
+      setCategory('custom');
+      setExpanded(false);
+    }
+  }, [params.selected]);
+  const all: StrategyOption[] = [
+    ...BUILTIN_STRATEGIES.filter((item) => item.id !== 'E'),
+    ...custom.map((item) => ({
+      ...item,
       isCustom: true,
-      steps: c.steps,
+      iconName: item.iconName as StrategyOption['iconName'],
     })),
   ];
+  const active = all.find((item) => item.id === selected) || all[1];
+  const steps = active.isCustom
+    ? active.steps || []
+    : BUILTIN_MOVEMENT_DETAILS[active.id]?.[active.id === 'A' ? variation : 0] || [];
+  const duration = steps.reduce((sum, step) => sum + step.timeMs, 0);
+  const label = FRIENDLY_NAMES[active.id] || active.title;
 
-  const activeStratObj = allStrategies.find((s) => s.id === selectedStrat) || BUILTIN_STRATEGIES[1];
-
-  let stepsList: StrategyStep[] = [];
-  if (activeStratObj.isCustom && activeStratObj.steps) {
-    stepsList = activeStratObj.steps;
-  } else {
-    stepsList =
-      BUILTIN_MOVEMENT_DETAILS[selectedStrat]?.[selectedStrat === 'A' ? selectedVariancia : 0] || [];
-  }
-
-  const triggerHapticSuccess = () => {
-    try {
-      Vibration.vibrate([0, 40, 40, 40]);
-    } catch {}
+  const choose = (id: string) => {
+    setSelected(id);
+    setExpanded(false);
+    setFeedback(null);
+    Vibration.vibrate(10);
   };
-
-  const triggerHapticError = () => {
-    try {
-      Vibration.vibrate([0, 100, 50, 100]);
-    } catch {}
-  };
-
-  const handleApplyStrategy = async () => {
-    setSendState('sending');
-    setFeedbackMsg(null);
-
-    try {
-      if (activeStratObj.isCustom && activeStratObj.steps) {
-        const payload = `RUN_STRAT,${activeStratObj.steps.length};` +
-          activeStratObj.steps.map((s) => `${s.motorEsq},${s.motorDir},${s.timeMs}`).join(';');
-        await send(payload);
-        triggerHapticSuccess();
-        setFeedbackMsg(`✓ Estratégia customizada "${activeStratObj.title}" enviada com sucesso!`);
-        setSendState('success');
-        return;
-      }
-
-      await send(`ESTRATEGIA_${selectedStrat}`);
-      setSendState('waiting');
-
-      const expectedStratConfirm = `ESTRATEGIA_${selectedStrat}`;
-      const expectVariancia = selectedStrat === 'A';
-      let stratConfirmed = false;
-      let varConfirmed = !expectVariancia;
-
-      let unsubscribe: (() => void) | null = null;
-
-      const cleanup = () => {
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        unsubscribe?.();
-      };
-
-      await new Promise<void>((resolve, reject) => {
-        timeoutRef.current = setTimeout(() => {
-          cleanup();
-          reject(new Error('Sem resposta do robô (Timeout de 3s). Solicitação cancelada.'));
-        }, CONFIRM_TIMEOUT_MS);
-
-        unsubscribe = onData((line) => {
-          if (!stratConfirmed && line === expectedStratConfirm) {
-            stratConfirmed = true;
-            if (expectVariancia) {
-              send(`VARIANCIA = ${selectedVariancia}`).catch(() => {});
-            }
-          }
-
-          if (!varConfirmed && line.startsWith('VARIANCIA_') && line.endsWith('_OK')) {
-            varConfirmed = true;
-          }
-
-          if (stratConfirmed && varConfirmed) {
-            cleanup();
-            resolve();
-          }
-        });
-      });
-
-      const varLabel = expectVariancia
-        ? ` · Variância: ${VARIANCIA_LABELS[selectedVariancia].label}`
-        : '';
-      triggerHapticSuccess();
-      setFeedbackMsg(`✓ Estratégia ${selectedStrat}${varLabel} confirmada pelo robô!`);
-      setSendState('success');
-    } catch (err: unknown) {
-      triggerHapticError();
-      const msg = err instanceof Error ? err.message : 'Erro ao enviar estratégia';
-      setFeedbackMsg(`✗ ${msg}`);
-      setSendState('error');
-    }
-  };
-
-  const handleExport = (stratObj: StrategyOption) => {
-    if (stratObj.isCustom) {
-      const customItem = customStrats.find((c) => c.id === stratObj.id);
-      if (customItem) {
-        setExportJsonText(exportStrategyToJSON(customItem));
-        setExportModalVisible(true);
-        return;
-      }
-    }
-
-    const stepsToExport =
-      BUILTIN_MOVEMENT_DETAILS[stratObj.id]?.[stratObj.id === 'A' ? selectedVariancia : 0] || [];
-
-    const json = JSON.stringify(
-      {
-        version: '1.0',
-        type: 'sumo_strategy',
-        strategy: {
-          title: stratObj.title,
-          subtitle: stratObj.subtitle,
-          badge: stratObj.badge,
-          iconName: stratObj.iconName,
-          description: stratObj.description,
-          steps: stepsToExport.map((s) => ({
-            step: s.stepNumber,
-            action: s.action,
-            motorEsq: s.motorEsq,
-            motorDir: s.motorDir,
-            timeMs: s.timeMs,
-          })),
-        },
-      },
-      null,
-      2
-    );
-
-    setExportJsonText(json);
-    setExportModalVisible(true);
-  };
-
-  const handleImportJSON = async () => {
-    if (!jsonText.trim()) {
-      Alert.alert('JSON Vazio', 'Cole o texto JSON da estratégia no campo.');
+  const apply = async () => {
+    if (busy) return;
+    if (active.isCustom && (!steps.length || steps.length > 10)) {
+      setFeedback({ message: 'Use de 1 a 10 etapas por estratégia.', error: true });
       return;
     }
-
+    setBusy(true);
+    setFeedback(null);
+    Vibration.vibrate(16);
     try {
-      const imported = await importStrategyFromJSON(jsonText);
-      await loadCustomStrategiesList();
-      setSelectedStrat(imported.id);
-      setImportModalVisible(false);
-      setJsonText('');
-      Alert.alert('Sucesso!', `Estratégia "${imported.title}" importada e salva com sucesso.`);
-    } catch (err: any) {
-      Alert.alert('Erro ao Importar', err.message || 'Formato JSON inválido.');
+      if (active.isCustom) {
+        await send(strategyCommand(steps));
+      } else {
+        await sendWithTimeout(
+          `ESTRATEGIA_${active.id}`,
+          (line) => line === `ESTRATEGIA_${active.id}`
+        );
+        if (active.id === 'A')
+          await sendWithTimeout(
+            `VARIANCIA = ${variation}`,
+            (line) => line === `VARIANCIA_${variation}_OK`
+          );
+      }
+      if (mounted.current)
+        setFeedback({
+          message: connection?.demo
+            ? `${label}: comando simulado.`
+            : active.isCustom
+              ? `${label}: sequência enviada para execução.`
+              : `${label}: seleção confirmada pelo robô.`,
+          error: false,
+        });
+    } catch (error) {
+      if (mounted.current)
+        setFeedback({
+          message: error instanceof Error ? error.message : 'Falha ao enviar.',
+          error: true,
+        });
+    } finally {
+      if (mounted.current) setBusy(false);
     }
   };
-
-  const handleDeleteCustom = async (id: string, name: string) => {
-    Alert.alert(
-      'Remover Estratégia',
-      `Deseja apagar permanentemente a estratégia "${name}"?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Remover',
-          style: 'destructive',
-          onPress: async () => {
-            await deleteCustomStrategy(id);
-            await loadCustomStrategiesList();
-            if (selectedStrat === id) {
-              setSelectedStrat('A');
-            }
-          },
-        },
-      ]
+  const exportActive = () => {
+    const item = custom.find((item) => item.id === active.id);
+    setJson(
+      item
+        ? exportStrategyToJSON(item)
+        : JSON.stringify(
+            {
+              version: '1.0',
+              type: 'sumo_strategy',
+              strategy: {
+                title: active.title,
+                subtitle: active.subtitle,
+                badge: active.badge,
+                iconName: active.iconName,
+                description: active.description,
+                steps: steps.map((step) => ({
+                  step: step.stepNumber,
+                  action: step.action,
+                  motorEsq: step.motorEsq,
+                  motorDir: step.motorDir,
+                  timeMs: step.timeMs,
+                })),
+              },
+            },
+            null,
+            2
+          )
     );
+    setModal('export');
   };
-
-  const isBusy = sendState === 'sending' || sendState === 'waiting';
-
-  const buttonLabel =
-    sendState === 'sending'
-      ? 'Enviando...'
-      : sendState === 'waiting'
-        ? 'Aguardando confirmação (até 3s)...'
-        : `Aplicar ${activeStratObj.title}${
-            selectedStrat === 'A' ? ` (${VARIANCIA_LABELS[selectedVariancia].label})` : ''
-          }`;
-
-  const robotActiveStrat = status?.ESTRATEGIA ?? 'Desconhecida';
-  const robotActiveVar = status?.VARIANCIA ?? '-';
+  const importJson = async () => {
+    try {
+      const item = await importStrategyFromJSON(json);
+      await reload();
+      setSelected(item.id);
+      setCategory('custom');
+      setModal(null);
+      setJson('');
+      setFeedback({ message: `${item.title}: estratégia importada.`, error: false });
+    } catch (error) {
+      setFeedback({
+        message: error instanceof Error ? error.message : 'JSON inválido.',
+        error: true,
+      });
+    }
+  };
+  const remove = () =>
+    Alert.alert('Excluir estratégia?', `“${active.title}” será removida do celular.`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteCustomStrategy(active.id);
+          await reload();
+          choose('A');
+          setCategory('builtin');
+        },
+      },
+    ]);
 
   return (
-    <View style={styles.container}>
-      <Container>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {/* Status Ativo no Robô & Atalho de Edição */}
-          <View style={styles.robotStatusCard}>
-            <View style={styles.rowBetween}>
-              <View style={styles.rowCenterGap}>
-                <View style={styles.activeDot} />
-                <Text style={styles.statusText}>
-                  Robô: Estratégia {robotActiveStrat}
-                  {robotActiveVar !== '-' ? ` (Var: ${robotActiveVar})` : ''}
-                </Text>
-              </View>
-              <Text style={styles.firmwareBadge}>Firmware OK</Text>
-            </View>
-
-            {/* Barra de Ações: Nova Estratégia & Importar/Exportar */}
-            <View style={styles.actionsBar}>
-              <TouchableOpacity
-                onPress={() => router.push('/editar-estrategia' as any)}
-                style={styles.btnActionPrimary}>
-                <Ionicons name="add-circle-outline" size={16} color="#ffffff" />
-                <Text style={styles.btnActionPrimaryText}>Nova / Calibrar</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setImportModalVisible(true)}
-                style={styles.btnActionSecondary}>
-                <Ionicons name="download-outline" size={16} color="#334155" />
-                <Text style={styles.btnActionSecondaryText}>Importar JSON</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Grid de Escolha de Estratégias */}
-          <View style={styles.sectionGap}>
-            <Text style={styles.sectionTitle}>
-              Selecione a Estratégia ({allStrategies.length})
-            </Text>
-
-            <View style={styles.strategiesList}>
-              {allStrategies.map((strat) => {
-                const isSelected = selectedStrat === strat.id;
-
-                return (
-                  <TouchableOpacity
-                    key={strat.id}
-                    onPress={() => setSelectedStrat(strat.id)}
-                    activeOpacity={0.7}
-                    style={[
-                      styles.stratCard,
-                      isSelected ? styles.stratCardSelected : styles.stratCardUnselected,
-                    ]}>
-                    <View style={styles.rowBetween}>
-                      <View style={styles.stratCardLeft}>
-                        <View
-                          style={[
-                            styles.stratIconBox,
-                            isSelected ? styles.stratIconBoxSelected : styles.stratIconBoxUnselected,
-                          ]}>
-                          <Ionicons
-                            name={strat.iconName}
-                            size={18}
-                            color={isSelected ? '#ffffff' : '#475569'}
-                          />
-                        </View>
-                        <View style={styles.flexOne}>
-                          <View style={styles.rowCenterGap}>
-                            <Text style={styles.stratTitleText}>{strat.title}</Text>
-                            {strat.isCustom && (
-                              <View style={styles.customBadgeBox}>
-                                <Text style={styles.customBadgeText}>Custom</Text>
-                              </View>
-                            )}
-                          </View>
-                          <Text style={styles.stratSubtitleText}>{strat.subtitle}</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.rowCenterGap}>
-                        {strat.isCustom && (
-                          <TouchableOpacity
-                            onPress={() =>
-                              router.push({
-                                pathname: '/editar-estrategia' as any,
-                                params: { id: strat.id },
-                              })
-                            }
-                            style={styles.iconPadding}>
-                            <Ionicons name="create-outline" size={16} color="#0284c7" />
-                          </TouchableOpacity>
-                        )}
-
-                        <TouchableOpacity onPress={() => handleExport(strat)} style={styles.iconPadding}>
-                          <Ionicons name="share-outline" size={16} color="#475569" />
-                        </TouchableOpacity>
-
-                        {strat.isCustom && (
-                          <TouchableOpacity
-                            onPress={() => handleDeleteCustom(strat.id, strat.title)}
-                            style={styles.iconPadding}>
-                            <Ionicons name="trash-outline" size={16} color="#e11d48" />
-                          </TouchableOpacity>
-                        )}
-                      </View>
+    <View style={ui.page}>
+      <ScrollView contentContainerStyle={ui.content}>
+        <PageTitle
+          eyebrow="Uma jogada à frente"
+          title="Prepare sua estratégia."
+          description="Escolha a abertura e confira a sequência antes de enviar."
+        />
+        {connection?.demo && (
+          <Notice>Demonstração: nenhum movimento será executado em um robô.</Notice>
+        )}
+        {!connection && (
+          <Notice>
+            Conecte o robô para aplicar uma estratégia. Você pode montar sua sequência agora.
+          </Notice>
+        )}
+        <View style={s.tabs}>
+          {(['builtin', 'custom'] as const).map((item) => (
+            <Pressable
+              accessibilityRole="button"
+              aria-selected={category === item}
+              accessibilityState={{ selected: category === item }}
+              key={item}
+              onPress={() => setCategory(item)}
+              style={[s.tab, category === item && { backgroundColor: c.night }]}>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontWeight: '700',
+                  color: category === item ? '#FFFFFF' : c.muted,
+                }}>
+                {item === 'builtin' ? 'Prontas para usar' : `Minhas estratégias · ${custom.length}`}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        <View style={s.grid}>
+          {all
+            .filter((item) => (category === 'custom' ? item.isCustom : !item.isCustom))
+            .map((item) => {
+              const checked = active.id === item.id;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  aria-selected={checked}
+                  accessibilityState={{ selected: checked, disabled: busy }}
+                  key={item.id}
+                  disabled={busy}
+                  onPress={() => choose(item.id)}
+                  style={({ pressed }) => [
+                    s.strategy,
+                    checked && { borderColor: c.primary, backgroundColor: c.primaryLight },
+                    { opacity: pressed ? 0.7 : 1 },
+                  ]}>
+                  <View style={[ui.row, { justifyContent: 'space-between' }]}>
+                    <View style={[s.icon, checked && { backgroundColor: c.primary }]}>
+                      <Ionicons
+                        name={item.iconName}
+                        size={23}
+                        color={checked ? '#FFFFFF' : c.primary}
+                      />
                     </View>
-                  </TouchableOpacity>
-                );
-              })}
+                    <Ionicons
+                      name={checked ? 'checkmark-circle' : 'ellipse-outline'}
+                      size={21}
+                      color={checked ? c.primary : c.line}
+                    />
+                  </View>
+                  <Text style={s.strategyTitle}>{FRIENDLY_NAMES[item.id] || item.title}</Text>
+                  <Text style={s.strategyMeta}>
+                    {item.isCustom
+                      ? `${item.steps?.length || 0} etapas`
+                      : `Estratégia ${item.id} · ${item.badge}`}
+                  </Text>
+                </Pressable>
+              );
+            })}
+        </View>
+        {category === 'custom' && !custom.length && (
+          <Card>
+            <Ionicons name="git-branch-outline" size={32} color={c.primary} />
+            <Text style={ui.section}>Sua próxima jogada começa aqui.</Text>
+            <Text style={ui.body}>
+              Combine movimentos, calibre os tempos e salve sua primeira estratégia.
+            </Text>
+          </Card>
+        )}
+        <View style={[ui.row, { flexWrap: 'wrap' }]}>
+          <Action
+            title="Criar estratégia"
+            icon="add"
+            tone="secondary"
+            onPress={() =>
+              router.navigate({
+                pathname: '/editar-estrategia',
+                params: { id: '', tab: 'estrategia' },
+              })
+            }
+            style={{ flexGrow: 1 }}
+          />
+          <Action
+            title="Importar"
+            icon="download-outline"
+            tone="secondary"
+            onPress={() => {
+              setJson('');
+              setModal('import');
+              setFeedback(null);
+            }}
+            style={{ flexGrow: 1 }}
+          />
+        </View>
+        <Card>
+          <View style={[ui.row, { justifyContent: 'space-between' }]}>
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={ui.eyebrow}>Selecionada</Text>
+              <Text style={ui.section}>{label}</Text>
+            </View>
+            <View style={s.duration}>
+              <Text style={{ color: c.primary, fontWeight: '700' }}>
+                {duration > 0 ? `${(duration / 1000).toFixed(2)} s` : 'Busca direta'}
+              </Text>
             </View>
           </View>
-
-          {/* Sub-seletor de Variância (Estratégia A Nactiva) */}
-          {activeStratObj.hasVariancia && (
-            <View style={styles.varianciaCard}>
-              <Text style={styles.sectionTitle}>
-                Variância / Distância de Ataque (Estratégia A)
-              </Text>
-              <View style={styles.rowGap}>
-                {VARIANCIA_LABELS.map((item) => {
-                  const isVarSelected = selectedVariancia === item.value;
-                  return (
-                    <TouchableOpacity
-                      key={item.value}
-                      onPress={() => setSelectedVariancia(item.value)}
-                      style={[
-                        styles.varButton,
-                        isVarSelected ? styles.varButtonSelected : styles.varButtonUnselected,
-                      ]}>
-                      <Text
-                        style={[
-                          styles.varButtonText,
-                          isVarSelected ? styles.varButtonTextSelected : styles.varButtonTextUnselected,
-                        ]}>
-                        {item.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+          <Text style={ui.body}>{active.description}</Text>
+          {active.hasVariancia && (
+            <View style={{ gap: 10 }}>
+              <Text style={s.strategyTitle}>Distância da abertura</Text>
+              <View style={ui.row}>
+                {VARIANCIA_LABELS.map((item) => (
+                  <Pressable
+                    key={item.value}
+                    accessibilityRole="button"
+                    aria-selected={variation === item.value}
+                    accessibilityState={{ selected: variation === item.value }}
+                    disabled={busy}
+                    onPress={() => {
+                      setVariation(item.value);
+                      setFeedback(null);
+                      Vibration.vibrate(10);
+                    }}
+                    style={[
+                      s.variant,
+                      variation === item.value && {
+                        backgroundColor: c.primary,
+                        borderColor: c.primary,
+                      },
+                    ]}>
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: '700',
+                        color: variation === item.value ? '#FFFFFF' : c.ink,
+                      }}>
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                ))}
               </View>
-              <Text style={styles.varDescText}>
-                {VARIANCIA_LABELS[selectedVariancia].desc}
-              </Text>
             </View>
           )}
-
-          {/* Trajetória Visual Interativa (Linha do Tempo) */}
-          <View style={styles.trajectoryCard}>
-            <View style={styles.rowBetweenBorder}>
-              <Text style={styles.sectionTitle}>
-                Trajetória Programada ({activeStratObj.title})
-              </Text>
-              <Text style={styles.stepsCountText}>{stepsList.length} Etapas</Text>
-            </View>
-
-            <View style={styles.stepsListGap}>
-              {stepsList.map((st, index) => (
-                <View key={st.id || index} style={styles.trajectoryStepItem}>
-                  <View style={styles.stepCircleDark}>
-                    <Text style={styles.stepCircleText}>{st.stepNumber || index + 1}</Text>
-                  </View>
-
-                  <View style={styles.flexOne}>
-                    <Text style={styles.trajectoryActionText}>{st.action}</Text>
-                    <Text style={styles.trajectoryMotorText}>
-                      Motor Esq: {st.motorEsq > 0 ? `+${st.motorEsq}` : st.motorEsq} | Motor Dir:{' '}
-                      {st.motorDir > 0 ? `+${st.motorDir}` : st.motorDir}
-                    </Text>
-                  </View>
-
-                  <View style={styles.timeBadgeBox}>
-                    <Text style={styles.timeBadgeText}>
-                      {st.timeMs > 0 ? `${st.timeMs}ms` : 'Loop PID'}
-                    </Text>
-                  </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            onPress={() => setExpanded(!expanded)}
+            style={[ui.row, { minHeight: 48, justifyContent: 'space-between' }]}>
+            <Text style={s.strategyTitle}>
+              {expanded ? 'Ocultar' : 'Ver'} sequência · {steps.length} etapas
+            </Text>
+            <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} color={c.primary} size={20} />
+          </Pressable>
+          {expanded &&
+            steps.map((step, index) => (
+              <View key={step.id || index} style={s.step}>
+                <View style={s.stepNumber}>
+                  <Text style={{ color: c.primary, fontWeight: '700' }}>{index + 1}</Text>
                 </View>
-              ))}
-            </View>
-          </View>
-
-          {/* Botão de Envio de Estratégia */}
-          <TouchableOpacity
-            onPress={handleApplyStrategy}
-            disabled={isBusy}
-            activeOpacity={0.8}
-            style={[
-              styles.btnApply,
-              { backgroundColor: isBusy ? '#94a3b8' : '#0f172a' },
-            ]}>
-            <Text style={styles.btnApplyText}>{buttonLabel}</Text>
-          </TouchableOpacity>
-
-          {/* Feedback Msg */}
-          {feedbackMsg ? (
-            <View
-              style={[
-                styles.feedbackContainer,
-                sendState === 'error' ? styles.feedbackError : styles.feedbackSuccess,
-              ]}>
-              <Text
-                style={[
-                  styles.feedbackMsgText,
-                  sendState === 'error' ? styles.feedbackErrorText : styles.feedbackSuccessText,
-                ]}>
-                {feedbackMsg}
-              </Text>
-            </View>
-          ) : null}
-        </ScrollView>
-
-        {/* Modal de Importação JSON */}
-        <Modal visible={importModalVisible} transparent animationType="fade">
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Importar Estratégia (JSON)</Text>
-              <Text style={styles.modalSubText}>
-                Cole o conteúdo JSON da estratégia para salvar e usar imediatamente:
-              </Text>
-
-              <TextInput
-                value={jsonText}
-                onChangeText={setJsonText}
-                placeholder={`{\n  "version": "1.0",\n  "strategy": { ... }\n}`}
-                multiline
-                numberOfLines={8}
-                textAlignVertical="top"
-                style={styles.modalJsonInput}
-              />
-
-              <View style={styles.rowButtons}>
-                <TouchableOpacity
-                  onPress={() => setImportModalVisible(false)}
-                  style={styles.btnModalCancel}>
-                  <Text style={styles.btnModalCancelText}>Cancelar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={handleImportJSON}
-                  style={styles.btnModalConfirm}>
-                  <Text style={styles.btnModalConfirmText}>Importar Estratégia</Text>
-                </TouchableOpacity>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={s.strategyTitle}>{step.action}</Text>
+                  <Text style={{ color: c.muted, fontSize: 12 }}>
+                    E {step.motorEsq} · D {step.motorDir}
+                  </Text>
+                </View>
+                <Text style={{ color: c.primary, fontSize: 12, fontWeight: '700' }}>
+                  {step.timeMs ? `${step.timeMs} ms` : 'Busca'}
+                </Text>
               </View>
-            </View>
+            ))}
+          <View style={[ui.row, { flexWrap: 'wrap' }]}>
+            {active.isCustom && (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() =>
+                  router.navigate({ pathname: '/editar-estrategia', params: { id: active.id } })
+                }
+                style={s.textAction}>
+                <Ionicons name="create-outline" size={19} color={c.primary} />
+                <Text style={s.textActionLabel}>Editar</Text>
+              </Pressable>
+            )}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Exportar"
+              onPress={exportActive}
+              style={s.textAction}>
+              <Ionicons name="share-outline" size={19} color={c.primary} />
+              <Text style={s.textActionLabel}>Exportar</Text>
+            </Pressable>
+            {active.isCustom && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Excluir ${active.title}`}
+                onPress={remove}
+                style={s.textAction}>
+                <Ionicons name="trash-outline" size={19} color={c.danger} />
+                <Text style={{ color: c.danger, fontWeight: '700' }}>Excluir</Text>
+              </Pressable>
+            )}
           </View>
-        </Modal>
-
-        {/* Modal de Exportação JSON */}
-        <Modal visible={exportModalVisible} transparent animationType="fade">
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
-              <View style={styles.rowBetween}>
-                <Text style={styles.modalTitle}>Exportar Estratégia (JSON)</Text>
-                <TouchableOpacity onPress={() => setExportModalVisible(false)}>
-                  <Ionicons name="close-circle-outline" size={22} color="#64748b" />
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.modalSubText}>
-                Copie o JSON abaixo para compartilhar ou salvar em arquivo:
+        </Card>
+        {feedback && !modal && <Notice error={feedback.error}>{feedback.message}</Notice>}
+      </ScrollView>
+      <View style={s.dock}>
+        <Action
+          title={active.isCustom ? `Executar ${label}` : `Aplicar ${label}`}
+          icon={active.isCustom ? 'play' : 'checkmark'}
+          busy={busy}
+          disabled={!connection}
+          onPress={() => void apply()}
+        />
+        <Text style={s.caption}>
+          {active.isCustom
+            ? 'A sequência começa assim que o robô receber o comando.'
+            : 'Define a abertura usada no próximo início de combate.'}
+        </Text>
+      </View>
+      <Modal
+        visible={modal !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setModal(null)}>
+        <KeyboardAvoidingView
+          style={s.overlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[s.sheet, { paddingBottom: 22 + insets.bottom }]}>
+            <View style={[ui.row, { justifyContent: 'space-between' }]}>
+              <Text style={ui.section}>
+                {modal === 'import' ? 'Importar estratégia' : 'Exportar estratégia'}
               </Text>
-
-              <TextInput
-                value={exportJsonText}
-                editable={false}
-                multiline
-                numberOfLines={10}
-                textAlignVertical="top"
-                style={styles.modalJsonExportInput}
-              />
-
-              <TouchableOpacity
-                onPress={() => {
-                  Vibration.vibrate(30);
-                  Alert.alert('Copiado!', 'Conteúdo JSON gerado com sucesso.');
-                }}
-                style={styles.btnCopyModal}>
-                <Text style={styles.btnCopyModalText}>Copiar Conteúdo JSON</Text>
-              </TouchableOpacity>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Fechar"
+                onPress={() => setModal(null)}
+                style={ui.iconButton}>
+                <Ionicons name="close" size={22} color={c.ink} />
+              </Pressable>
             </View>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 14 }}>
+              <Text style={ui.body}>
+                {modal === 'import'
+                  ? 'Cole o JSON de uma estratégia com até 10 etapas.'
+                  : 'Selecione o texto para copiar ou compartilhe a estratégia.'}
+              </Text>
+              <TextInput
+                accessibilityLabel="JSON da estratégia"
+                value={json}
+                onChangeText={setJson}
+                editable={modal === 'import'}
+                multiline
+                textAlignVertical="top"
+                style={s.json}
+                placeholder="Cole o JSON aqui…"
+                placeholderTextColor={c.muted}
+              />
+              {feedback && <Notice error={feedback.error}>{feedback.message}</Notice>}
+              {modal === 'import' ? (
+                <Action
+                  title="Importar e salvar"
+                  icon="download-outline"
+                  onPress={() => void importJson()}
+                  disabled={!json.trim()}
+                />
+              ) : (
+                Platform.OS !== 'web' && (
+                  <Action
+                    title="Compartilhar JSON"
+                    icon="share-outline"
+                    onPress={async () => {
+                      try {
+                        await Share.share({ message: json, title: active.title });
+                      } catch (error) {
+                        setFeedback({
+                          message:
+                            error instanceof Error
+                              ? error.message
+                              : 'Não foi possível compartilhar.',
+                          error: true,
+                        });
+                      }
+                    }}
+                  />
+                )
+              )}
+            </ScrollView>
           </View>
-        </Modal>
-      </Container>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
+const s = StyleSheet.create({
+  tabs: { flexDirection: 'row', padding: 4, borderRadius: 16, backgroundColor: c.surface, gap: 4 },
+  tab: {
     flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  scrollContent: {
-    gap: 16,
-    paddingBottom: 32,
-    paddingHorizontal: 14,
-    paddingTop: 8,
-  },
-  robotStatusCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-    padding: 14,
-    gap: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  rowBetween: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  rowCenterGap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  activeDot: {
-    height: 10,
-    width: 10,
-    borderRadius: 5,
-    backgroundColor: '#10b981',
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  firmwareBadge: {
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    color: '#94a3b8',
-  },
-  actionsBar: {
-    flexDirection: 'row',
-    gap: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
-    paddingTop: 10,
-    marginTop: 4,
-  },
-  btnActionPrimary: {
-    flex: 1,
-    flexDirection: 'row',
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    borderRadius: 10,
-    backgroundColor: '#0f172a',
-    paddingVertical: 10,
-  },
-  btnActionPrimaryText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  btnActionSecondary: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#f1f5f9',
-    paddingVertical: 10,
-  },
-  btnActionSecondaryText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  sectionGap: {
-    gap: 8,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    color: '#64748b',
-  },
-  strategiesList: {
-    gap: 8,
-  },
-  stratCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 14,
-    backgroundColor: '#ffffff',
-  },
-  stratCardSelected: {
-    borderColor: '#0f172a',
-    borderWidth: 2,
-  },
-  stratCardUnselected: {
-    borderColor: '#e2e8f0',
-    borderWidth: 1,
-  },
-  stratCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-    paddingRight: 8,
-  },
-  stratIconBox: {
-    height: 34,
-    width: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-  },
-  stratIconBoxSelected: {
-    backgroundColor: '#0f172a',
-  },
-  stratIconBoxUnselected: {
-    backgroundColor: '#f1f5f9',
-  },
-  stratTitleText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  customBadgeBox: {
-    borderRadius: 6,
-    backgroundColor: '#e0f2fe',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  customBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#0369a1',
-  },
-  stratSubtitleText: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-  iconPadding: {
-    padding: 4,
-  },
-  flexOne: {
-    flex: 1,
-  },
-  varianciaCard: {
-    gap: 10,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-    padding: 14,
-  },
-  rowGap: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  varButton: {
-    flex: 1,
-    alignItems: 'center',
-    borderRadius: 10,
-    borderWidth: 1,
-    paddingVertical: 8,
-  },
-  varButtonSelected: {
-    backgroundColor: '#0f172a',
-    borderColor: '#0f172a',
-  },
-  varButtonUnselected: {
-    backgroundColor: '#f8fafc',
-    borderColor: '#e2e8f0',
-  },
-  varButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  varButtonTextSelected: {
-    color: '#ffffff',
-  },
-  varButtonTextUnselected: {
-    color: '#475569',
-  },
-  varDescText: {
-    fontSize: 12,
-    fontStyle: 'italic',
-    color: '#64748b',
-  },
-  trajectoryCard: {
-    gap: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-    padding: 14,
-  },
-  rowBetweenBorder: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    paddingBottom: 8,
-  },
-  stepsCountText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  stepsListGap: {
-    gap: 8,
-  },
-  trajectoryStepItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#f1f5f9',
-    backgroundColor: '#f8fafc',
-    padding: 10,
-  },
-  stepCircleDark: {
-    height: 24,
-    width: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 999,
-    backgroundColor: '#0f172a',
-  },
-  stepCircleText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  trajectoryActionText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1e293b',
-  },
-  trajectoryMotorText: {
-    fontFamily: 'monospace',
-    fontSize: 10,
-    color: '#94a3b8',
-  },
-  timeBadgeBox: {
-    borderRadius: 6,
-    backgroundColor: '#e2e8f0',
+    borderRadius: 12,
     paddingHorizontal: 8,
-    paddingVertical: 2,
   },
-  timeBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  btnApply: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    paddingVertical: 14,
-  },
-  btnApplyText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  feedbackContainer: {
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 12,
-  },
-  feedbackSuccess: {
-    borderColor: '#a7f3d0',
-    backgroundColor: '#ecfdf5',
-  },
-  feedbackError: {
-    borderColor: '#fca5a5',
-    backgroundColor: '#fef2f2',
-  },
-  feedbackMsgText: {
-    textAlign: 'center',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  feedbackSuccessText: {
-    color: '#047857',
-  },
-  feedbackErrorText: {
-    color: '#b91c1c',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
-  modalCard: {
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  strategy: {
+    width: '48%',
+    flexGrow: 1,
+    minWidth: 130,
+    borderWidth: 1.5,
+    borderColor: c.line,
     borderRadius: 20,
-    backgroundColor: '#ffffff',
-    padding: 20,
+    padding: 16,
     gap: 12,
+    backgroundColor: c.surface,
   },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0f172a',
+  icon: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: c.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  modalSubText: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-  modalJsonInput: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#f8fafc',
-    padding: 12,
-    fontFamily: 'monospace',
-    fontSize: 12,
-    color: '#0f172a',
-    height: 160,
-  },
-  modalJsonExportInput: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#f1f5f9',
-    padding: 12,
-    fontFamily: 'monospace',
-    fontSize: 12,
-    color: '#334155',
-    height: 190,
-  },
-  btnModalCancel: {
+  strategyTitle: { fontSize: 15, fontWeight: '700', color: c.ink },
+  strategyMeta: { color: c.muted, fontSize: 12, lineHeight: 18 },
+  duration: { backgroundColor: c.primaryLight, padding: 10, borderRadius: 12 },
+  variant: {
     flex: 1,
-    alignItems: 'center',
-    borderRadius: 12,
+    minHeight: 48,
+    borderRadius: 13,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    paddingVertical: 10,
-  },
-  btnModalCancelText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  btnModalConfirm: {
-    flex: 1,
+    borderColor: c.line,
     alignItems: 'center',
-    borderRadius: 12,
-    backgroundColor: '#0f172a',
-    paddingVertical: 10,
+    justifyContent: 'center',
   },
-  btnModalConfirmText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  btnCopyModal: {
-    alignItems: 'center',
-    borderRadius: 12,
-    backgroundColor: '#0f172a',
-    paddingVertical: 12,
-    marginTop: 4,
-  },
-  btnCopyModalText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  rowButtons: {
+  step: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderColor: c.line,
+  },
+  stepNumber: {
+    width: 32,
+    height: 32,
+    backgroundColor: c.primaryLight,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  textAction: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+  },
+  textActionLabel: { color: c.primary, fontWeight: '700' },
+  dock: {
+    backgroundColor: c.surface,
+    borderTopWidth: 1,
+    borderColor: c.line,
+    padding: 16,
     gap: 8,
-    marginTop: 8,
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
+  },
+  caption: { fontSize: 11, textAlign: 'center', color: c.muted },
+  overlay: { flex: 1, backgroundColor: '#102E2C99', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: c.surface,
+    padding: 22,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    maxHeight: '90%',
+    gap: 14,
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
+  },
+  json: {
+    minHeight: 220,
+    maxHeight: 340,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: c.background,
+    color: c.ink,
+    fontFamily: 'monospace',
+    fontSize: 13,
+    borderWidth: 1,
+    borderColor: c.line,
   },
 });

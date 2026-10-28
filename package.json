@@ -12,7 +12,10 @@
     "web": "expo start --web",
     "build:apk": "eas build --platform android --profile preview",
     "build:development": "eas build --platform android --profile development",
-    "build:final": "eas build --platform android --profile production"
+    "build:final": "eas build --platform android --profile production",
+    "test": "bun test tests",
+    "typecheck": "tsc --noEmit",
+    "start:development": "expo start --dev-client"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",

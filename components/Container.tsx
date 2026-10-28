@@ -7,12 +7,12 @@ interface ContainerProps {
 
 export const Container: React.FC<ContainerProps> = ({ children }) => {
   return (
-    <SafeAreaView className="flex flex-1">
+    <SafeAreaView edges={['left', 'right']} className="flex flex-1">
       <View className={styles.container}>{children}</View>
     </SafeAreaView>
   );
 };
 
 const styles = {
-  container: 'flex flex-1 p-4',
+  container: 'flex flex-1',
 };

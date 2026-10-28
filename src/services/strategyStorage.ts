@@ -173,6 +173,7 @@ export async function saveMovementPreset(preset: MovementPreset): Promise<Moveme
 export async function resetMovementPresets(): Promise<MovementPreset[]> {
   try {
     await safeSetItem(MOVEMENT_PRESETS_KEY, JSON.stringify(DEFAULT_MOVEMENT_PRESETS));
+    for (const preset of DEFAULT_MOVEMENT_PRESETS) await syncStrategiesWithPreset(preset);
     return DEFAULT_MOVEMENT_PRESETS;
   } catch (e) {
     console.error('Erro ao resetar presets:', e);
@@ -313,9 +314,17 @@ export async function importStrategyFromJSON(jsonString: string): Promise<Custom
       throw new Error('Estratégia inválida: deve conter pelo menos 1 etapa ("steps").');
     }
 
+    if (target.steps.length > 10) throw new Error('O robô aceita no máximo 10 etapas.');
+
     const steps: StrategyStep[] = target.steps.map((st: any, idx: number) => {
-      if (typeof st.motorEsq !== 'number' || typeof st.motorDir !== 'number') {
+      if (!st || !Number.isFinite(st.motorEsq) || !Number.isFinite(st.motorDir)) {
         throw new Error(`Etapa ${idx + 1} com motores inválidos.`);
+      }
+      if (
+        st.timeMs !== undefined &&
+        (!Number.isFinite(st.timeMs) || st.timeMs < 0 || st.timeMs > 65535)
+      ) {
+        throw new Error(`Etapa ${idx + 1}: duração deve estar entre 0 e 65535 ms.`);
       }
       return {
         id: `imported_step_${Date.now()}_${idx}`,
